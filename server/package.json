@@ -1,0 +1,27 @@
+{
+  "name": "xkang-server",
+  "version": "1.0.0",
+  "description": "xkang-tui companion server: MCP tool host & LLM proxy with audit and auth",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.11.0",
+    "dotenv": "^17.4.2",
+    "express": "^4.21.2",
+    "mysql2": "^3.23.3",
+    "openai": "^7.4.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^26.2.0",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  }
+}

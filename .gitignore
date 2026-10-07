@@ -1,0 +1,27 @@
+# dependencies & build output
+node_modules
+dist
+
+# secrets & local env (credentials live only here)
+.env
+.env.local
+.zcode/
+
+# runtime data: sessions, audit logs, tokens, codegraph index, release binaries
+data/
+server/data/
+*.db
+*.db-shm
+*.db-wal
+*.jsonl
+active_model.json
+key_shell.txt
+
+# binaries & packaging artifacts
+*.exe
+out/
+.v2c/
+
+# misc
+*.log
+.DS_Store
