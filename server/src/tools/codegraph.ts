@@ -49,7 +49,18 @@ export function getCodeSyncManager(config?: ServerConfig): CodeSyncManager {
   return codeSyncManager;
 }
 
-export function initCodeSyncScheduler(config: ServerConfig): CodeSyncScheduler {
+export function isCodeSyncEnabled(config?: ServerConfig): boolean {
+  const flag = (process.env.CODE_SYNC_ENABLED || '').trim().toLowerCase();
+  if (['0', 'false', 'off', 'no'].includes(flag)) return false;
+  return (config?.codeSyncIntervalMinutes ?? 10) > 0;
+}
+
+export function initCodeSyncScheduler(config: ServerConfig): CodeSyncScheduler | null {
+  // 测试/临时实例必须能关闭定时同步：它会对 D:\skt_project 下的仓库执行 git fetch/pull，失败时还会 reset --hard
+  if (!isCodeSyncEnabled(config)) {
+    console.log('[CodeSyncScheduler] 已按配置关闭定时代码同步 (CODE_SYNC_ENABLED=false 或 CODE_SYNC_INTERVAL_MINUTES=0)');
+    return null;
+  }
   if (!codeSyncScheduler) {
     const manager = getCodeSyncManager(config);
     const intervalMinutes = config.codeSyncIntervalMinutes || parseInt(process.env.CODE_SYNC_INTERVAL_MINUTES || '10', 10);
@@ -59,9 +70,14 @@ export function initCodeSyncScheduler(config: ServerConfig): CodeSyncScheduler {
   return codeSyncScheduler;
 }
 
+const STATIC_ANALYSIS_CAVEAT =
+  '说明: 代码图谱基于静态解析，反射调用、Spring 注入的动态分发、MyBatis XML 中的引用、前端通过 URL 字符串调用的接口等都可能不在图谱里。';
+
 export async function executeCodeGraph(
   args: CodeGraphQueryArgs,
-  config: ServerConfig
+  config: ServerConfig,
+  fetchImpl: typeof fetch = fetch,
+  service: Pick<CodeGraphService, 'query'> | null = null
 ): Promise<string> {
   const { symbol, queryType, repo, scope = 'all' } = args;
 
@@ -73,56 +89,48 @@ export async function executeCodeGraph(
   }
 
   // 1. Prioritize local high-performance CodeGraph engine
+  let localResult: ReturnType<CodeGraphService['query']> | null = null;
+  let localError: string | null = null;
   try {
-    const service = getCodeGraphService();
-    const queryResult = service.query(symbol, queryType, repo, scope);
-
-    if (queryResult.status === 'completed' && queryResult.results.length > 0) {
-      return formatGraphResultToMarkdown(queryResult);
+    localResult = (service || getCodeGraphService()).query(symbol, queryType, repo, scope);
+    if (localResult.status === 'completed' && localResult.results.length > 0) {
+      return formatGraphResultToMarkdown(localResult);
     }
   } catch (err) {
+    localError = err instanceof Error ? err.message : String(err);
     console.warn('[CodeGraph execute error]:', err);
-    // Fallback to remote endpoint if local service fails
   }
 
   // 2. Try company remote CodeGraph HTTP service
   if (config.codeGraphEndpoint) {
     try {
-      const response = await fetch(`${config.codeGraphEndpoint}/api/query`, {
+      const response = await fetchImpl(`${config.codeGraphEndpoint}/api/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          symbol,
-          queryType,
-          repo: repo || 'default',
-          scope,
-        }),
+        body: JSON.stringify({ symbol, queryType, repo: repo || 'default', scope }),
+        signal: AbortSignal.timeout(5000),
       });
-
       if (response.ok) {
-        const json = await response.json();
-        return typeof json === 'string' ? json : JSON.stringify(json, null, 2);
+        const json: any = await response.json();
+        if (json && Array.isArray(json.results) && json.results.length > 0) {
+          return formatGraphResultToMarkdown({ ...json, symbol, queryType, scope });
+        }
       }
     } catch {
       // Remote unreachable
     }
   }
 
-  const scopeLabel = scope === 'frontend' ? '前端工程 (skt-front)' : (scope === 'backend' ? '后端工程 (skt-back/remote)' : '全部工程');
-
-  // 3. Structured fallback
-  return JSON.stringify(
-    {
-      status: 'completed',
-      symbol,
-      queryType,
-      scope,
-      message: `【CodeGraph 服务端】已在已导入的 [${scopeLabel}] 中对符号 "${symbol}" 执行 [${queryType}] 拓扑检索。未发现更多相关关联。`,
-      results: [],
-    },
-    null,
-    2
-  );
+  // 3. 明确区分"图谱里没有"与"查询失败"，两者都不能被当作"代码中不存在调用关系"
+  if (localResult && localResult.status === 'not_found') {
+    return [
+      `${localResult.message}`,
+      STATIC_ANALYSIS_CAVEAT,
+      '因此"图谱中没有"不代表代码里不存在该关系，请用 search_code 搜索符号名交叉验证后再下结论。',
+    ].join('\n');
+  }
+  const reason = localError || localResult?.message || '图谱服务不可用';
+  return `【CodeGraph 查询失败】未能完成对 "${symbol}" 的 ${queryType} 查询（原因: ${reason}）。这次查询没有得到任何结论，请改用 search_code 检索该符号。`;
 }
 
 function formatGraphResultToMarkdown(res: any): string {

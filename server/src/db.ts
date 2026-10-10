@@ -48,6 +48,9 @@ export class AppDatabase {
     this.db.exec('PRAGMA synchronous = NORMAL;');
 
     this.initSchema();
+    const tokenColumns = this.db.prepare('PRAGMA table_info(auth_tokens)').all() as Array<{ name: string }>;
+    if (!tokenColumns.some(column => column.name === 'subject_id')) this.db.exec('ALTER TABLE auth_tokens ADD COLUMN subject_id TEXT');
+    this.db.exec('PRAGMA secure_delete = ON');
     this.autoMigrateLegacyFiles();
   }
 
@@ -162,11 +165,13 @@ export class AppDatabase {
         const raw = fs.readFileSync(activeModelPath, 'utf-8');
         const data = JSON.parse(raw || '{}');
         if (data.activeModel) {
-          this.db.prepare(`
-            INSERT OR REPLACE INTO sys_configs (key, value, updated_at)
+          const res = this.db.prepare(`
+            INSERT OR IGNORE INTO sys_configs (key, value, updated_at)
             VALUES ('active_model', ?, datetime('now', 'localtime'))
           `).run(String(data.activeModel));
-          console.log(`[DatabaseSync] 已从 active_model.json 迁移当前模型: [${data.activeModel}]`);
+          if (res.changes > 0) {
+            console.log(`[DatabaseSync] 已从 active_model.json 迁移当前模型: [${data.activeModel}]`);
+          }
         }
       } catch (err) {
         console.error('[DatabaseSync] 迁移 active_model.json 异常:', err);

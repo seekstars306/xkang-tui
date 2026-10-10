@@ -1,0 +1,8 @@
+{
+  "name": "@xkang/agent-core",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": "./dist/index.js", "./context": "./dist/context.js", "./types": "./dist/types.js", "./protocol": "./dist/protocol.js", "./public": "./dist/public.js" }
+}

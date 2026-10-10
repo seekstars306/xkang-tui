@@ -1,0 +1,22 @@
+[
+  {"id":"amount_refund_components","category":"amount","question":"请按现行业务规则说明：机票退票时，退款金额、退票费和服务费分别是什么口径？哪些情况不能把它们混成一个金额？请只解释这一规则，不判断具体订单。"},
+  {"id":"amount_hotel_cancel","category":"amount","question":"请按现行业务规则说明：酒店订单取消时，应退金额是按订单总额、实际付款还是扣费后金额确定？请说明条件和仍需确认的边界，不判断具体订单。"},
+  {"id":"amount_taxi_coupon","category":"amount","question":"请核对打车业务规则：优惠券或折扣抵扣的金额是否属于客户实际付款，查看订单金额时应如何区分？不需要查询某位客户。"},
+  {"id":"amount_air_change","category":"amount","question":"机票改签产生的票款差额与服务费是如何区分的？请核对本系统相关规则，用业务语言说明应收和实际收款不能混用的边界。"},
+  {"id":"scope_disabled_staff","category":"scope","question":"请核对通知规则：员工被停用或删除后，保留的通知配置是否仍等于当前有效接收范围？请说明适用条件，不能把保留配置直接当作已经送达。"},
+  {"id":"scope_business_channels","category":"scope","question":"酒店与机票业务的通知接收范围是否完全相同？请核对通知配置是否按业务类型和发送渠道区分，用业务语言说明。"},
+  {"id":"scope_overlap_rules","category":"scope","question":"同一个人同时符合组织和个人通知配置时，接收名单应如何合并，是否意味着一定会收到两次通知？请核对已有机制与实际送达的区别。"},
+  {"id":"scope_contact_traveler","category":"scope","question":"机票出票通知会发给企业联系人、订票人还是实际乘机人？请核对配置和业务条件，说明为什么不能一概而论。"},
+  {"id":"branch_air_issue_retry","category":"branch","question":"机票订单出票失败后是否可以直接再次申请出票？请核对现有状态限制，用客服语言说明可重试和需要先核实的情形。"},
+  {"id":"branch_train_cancel","category":"branch","question":"火车票订单取消后，是否还能继续原来的出票操作？请核对取消前后的状态限制，说明客服应如何判断。"},
+  {"id":"branch_hotel_confirmation","category":"branch","question":"酒店订单确认失败和订单已经取消，对后续处理的限制是否相同？请核对当前业务规则，只说明有依据的区别。"},
+  {"id":"branch_duplicate_refund","category":"branch","question":"同一张机票重复提交退票申请时，系统有哪些状态或重复申请限制？请用业务语言说明，不输出内部技术名称。"},
+  {"id":"cause_payment_status","category":"cause","question":"支付渠道提示成功，但订单页面仍显示待支付，能否直接判定客户没有付款？请核对本系统支付状态处理方式，区分规则和具体事件需要的证据。"},
+  {"id":"cause_notification_missing","category":"cause","question":"客户没收到订票通知，能否据此认定订单没有成功？请核对通知与订单处理的关系，并说明还应核实哪些业务事实。"},
+  {"id":"cause_refund_accepted","category":"cause","question":"退票或退款申请提交成功，是否就等于退款已经到账？请核对相关业务阶段，说明哪些状态可以确认、哪些不能替代到账证据。"},
+  {"id":"cause_canceled_payment","category":"cause","question":"订单当前已经取消，是否能证明它从未发生扣款？请根据本系统处理机制说明判断边界，不假定某个具体客户已经退款。"},
+  {"id":"advice_issued_unpaid","category":"advice","question":"客户的机票已经出票，但收款状态显示异常，客服应先核实哪些业务信息？请根据现有业务规则给出核实顺序，不承诺已经修复。"},
+  {"id":"advice_hotel_double_charge","category":"advice","question":"客户反映酒店订单扣款两次，客服能否立即再安排一笔退款？请根据本系统关联收款、退款的方式说明必要核实步骤，不假定任一笔已退或未退。"},
+  {"id":"advice_train_refund_time","category":"advice","question":"火车票退票申请显示处理中，客服现在可以确认退款已完成或承诺确定到账时间吗？请核对状态含义和现有依据。"},
+  {"id":"advice_contact_resend","category":"advice","question":"修改通知接收人的联系方式后，原来发送失败的通知是否会自动补发到新号码？请核对现有重试条件，区分自动与人工操作。"}
+]

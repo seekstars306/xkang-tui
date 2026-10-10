@@ -6,20 +6,25 @@ export interface TodoItem {
   priority?: 'high' | 'medium' | 'low';
 }
 
-// In-memory session store for todo items
-let currentTodos: TodoItem[] = [];
+// 按会话隔离的待办状态（以前是模块级全局变量，网页端多个会话会互相覆盖）
+const todosByContext = new WeakMap<object, TodoItem[]>();
+const DEFAULT_CONTEXT_KEY = {};
 
-export function getCurrentTodos(): TodoItem[] {
-  return [...currentTodos];
+function keyOf(context?: HarnessContext): object {
+  return context || DEFAULT_CONTEXT_KEY;
 }
 
-export function resetTodos(): void {
-  currentTodos = [];
+export function getCurrentTodos(context?: HarnessContext): TodoItem[] {
+  return [...(todosByContext.get(keyOf(context)) || [])];
+}
+
+export function resetTodos(context?: HarnessContext): void {
+  todosByContext.delete(keyOf(context));
 }
 
 export const todoWriteTool: ToolDefinition = {
   name: 'todo_write',
-  description: '排障任务规划与待办看板：记录、更新排障步骤与进度，使排障过程结构化、透明化。每次调用传入完整的最新任务列表。',
+  description: '排障任务看板：只在需要 3 个以上相互独立的排查步骤时使用，记录步骤与进度。每次传入完整的最新任务列表；只有拿到该步骤所需证据后才能标记 completed，失败或超时的步骤不要标记完成。',
   parameters: {
     type: 'object',
     properties: {
@@ -50,7 +55,7 @@ export const todoWriteTool: ToolDefinition = {
     },
     required: ['todos'],
   },
-  execute: async (args: Record<string, unknown>, _context: HarnessContext) => {
+  execute: async (args: Record<string, unknown>, context: HarnessContext) => {
     const rawTodos = args.todos;
     if (!Array.isArray(rawTodos)) {
       return '错误: todos 参数必须为列表数组。';
@@ -64,7 +69,7 @@ export const todoWriteTool: ToolDefinition = {
       priority: ['high', 'medium', 'low'].includes(item.priority) ? item.priority : 'medium',
     }));
 
-    currentTodos = newTodos;
+    todosByContext.set(keyOf(context), newTodos);
 
     const completed = newTodos.filter((t) => t.status === 'completed').length;
     const inProgress = newTodos.filter((t) => t.status === 'in_progress').length;

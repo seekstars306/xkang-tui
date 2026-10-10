@@ -139,12 +139,51 @@ export interface TierSwitchOptions {
   enableL2?: boolean;
 }
 
+/** 公司内部排障工具（L1 通道不下发） */
+export const SERVER_COMPANY_MCP_TOOLS = new Set([
+  'lookup_order',
+  'search_code',
+  'read_file_lines',
+  'company_db_query',
+  'query_company_database',
+  'codegraph_explore',
+  'git_inspect',
+  'knowledge_search',
+  'search_logs',
+  'list_log_apps',
+]);
+
+const LEGACY_REMINDER_PREFIXES = ['【系统提醒】', '【通道降级提醒】', '【排查提示】', '【取证盲区提醒】', '请根据前面工具调用的检索结果', '你刚才只是用文字'];
+
+function messageText(m: any): string {
+  if (!m) return '';
+  if (typeof m.content === 'string') return m.content;
+  if (Array.isArray(m.content)) return m.content.map((c: any) => c?.text || '').join(' ');
+  return '';
+}
+
+/** harness 自动注入的提醒/纠偏消息（以 user 角色发送，但不是客服说的话） */
+export function isHarnessReminderText(text: string): boolean {
+  const t = text.trimStart();
+  return t.startsWith('<system-reminder>') || LEGACY_REMINDER_PREFIXES.some((p) => t.startsWith(p));
+}
+
+function conversationUsedCompanyTools(messages: any[]): boolean {
+  return messages.some((m: any) => {
+    if (m?.role === 'tool' && m.name && SERVER_COMPANY_MCP_TOOLS.has(m.name)) return true;
+    if (m?.role === 'assistant' && Array.isArray(m.tool_calls)) {
+      return m.tool_calls.some((tc: any) => SERVER_COMPANY_MCP_TOOLS.has(tc?.function?.name || tc?.name));
+    }
+    return false;
+  });
+}
+
 /**
  * 智能双通道动态请求分类器：
  * - L1 (Grok Medium): 日常通用任务、本地文件读写/命令、基础问答、互联网搜索
  * - L2 (Gemini / DeepSeek): 内部代码排障、数据库/账单查证、图片多模态分析、客服争议投诉
  * 
- * 开关策略：
+ * 开关策略（只作用于 auto 智能路由；管理员通过 /admin/model 显式锁定的模型优先）：
  * - ENABLE_L1=0, ENABLE_L2=1 -> 关闭 L1，全部走 L2 (Gemini)
  * - ENABLE_L1=1, ENABLE_L2=0 -> 关闭 L2，全部走 L1 (Grok)
  * - ENABLE_L1=1, ENABLE_L2=1 (默认) -> 启用智能动态路由
@@ -157,6 +196,34 @@ export function classifyRequest(
 ): ClassificationResult {
   const enableL1 = tierOptions?.enableL1 !== false;
   const enableL2 = tierOptions?.enableL2 !== false;
+
+  // 规则 0：L1 通道主动声明能力不足（升级协议标记）-> 升级到 L2
+  // 只检测最后一条 user 消息：升级标记由 harness 注入的升级指令携带，仅对当次请求生效，
+  // 避免历史中的标记把后续日常问题也永久路由到 L2
+  const lastUserMsg = [...messages].reverse().find((m: any) => m?.role === 'user');
+  const lastUserText = messageText(lastUserMsg);
+  const adminProfile = activeSetting !== 'auto' ? MODEL_PROFILES[activeSetting] : undefined;
+  if (lastUserText.includes('[[ESCALATE_TO_L2]]') && (adminProfile || enableL2)) {
+    // 管理员锁定的若本身就是 L2 模型，升级时沿用该模型
+    const target: ManagedModelId = adminProfile && adminProfile.promptTier === 'l2' ? activeSetting : 'gemini';
+    return {
+      targetModel: target,
+      tier: 'l2',
+      matchedRule: 'L1_ESCALATION',
+      reason: `L1 通道声明该请求需要内部数据深度排查，自动升级至 ${target} 深度排障引擎`,
+    };
+  }
+
+  // 管理员显式锁定了固定模型（非 auto）：优先于 ENABLE_L1/ENABLE_L2 开关。
+  // 以前开关先于管理员设置判断，ENABLE_L1=0 时 /admin/model 切换到 deepseek 会返回成功却被静默忽略
+  if (adminProfile) {
+    return {
+      targetModel: activeSetting,
+      tier: adminProfile.promptTier,
+      matchedRule: `ADMIN_FIXED_SETTING (${activeSetting})`,
+      reason: `管理员已将活跃模型锁定为 [${activeSetting}]`,
+    };
+  }
 
   // 1. 如果仅开启 L2（关闭 L1）：所有请求全量走 L2 (Gemini)
   if (!enableL1 && enableL2) {
@@ -189,38 +256,7 @@ export function classifyRequest(
   }
 
   // 4. 两者均开启（默认）：按智能动态规则分流
-  // 规则 0：L1 通道主动声明能力不足（升级协议标记）-> 强制走 L2 (Gemini)
-  // 只检测最后一条 user 消息：升级标记由 harness 注入的升级指令携带，仅对当次请求生效，
-  // 避免历史中的标记把后续日常问题也永久路由到 L2
-  const lastUserMsg = [...messages].reverse().find((m: any) => m?.role === 'user');
-  const lastUserText = lastUserMsg
-    ? typeof lastUserMsg.content === 'string'
-      ? lastUserMsg.content
-      : Array.isArray(lastUserMsg.content)
-      ? lastUserMsg.content.map((c: any) => c.text || '').join(' ')
-      : ''
-    : '';
-  if (lastUserText.includes('[[ESCALATE_TO_L2]]')) {
-    return {
-      targetModel: 'gemini',
-      tier: 'l2',
-      matchedRule: 'L1_ESCALATION',
-      reason: 'L1 通道声明该请求需要内部数据深度排查，自动升级至 Gemini 深度排障引擎',
-    };
-  }
-
-  // 如果管理员强制指定了固定模型（非 auto），直接走该模型
-  if (activeSetting !== 'auto') {
-    const profile = MODEL_PROFILES[activeSetting] || MODEL_PROFILES.gemini;
-    return {
-      targetModel: activeSetting,
-      tier: profile.promptTier,
-      matchedRule: `ADMIN_FIXED_SETTING (${activeSetting})`,
-      reason: `管理员已将活跃模型锁定为 [${activeSetting}]`,
-    };
-  }
-
-  // 1. 规则 1：检查是否包含图片多模态输入 -> 强制走 L2 (Gemini)
+  // 规则 1：检查是否包含图片多模态输入 -> 强制走 L2 (Gemini)
   for (const m of messages) {
     if (Array.isArray(m.content)) {
       const hasImage = m.content.some((p: any) => p.type === 'image_url' || p.image_url);
@@ -235,20 +271,21 @@ export function classifyRequest(
     }
   }
 
-  // 2. 规则 2：检查是否发起了内部企业代码或数据库查询工具 -> 强制走 L2 (Gemini)
-  // 注意：跳过 harness 注入的【系统提醒】纠偏消息，以真实用户输入为准
-  const lastMsg = [...messages].reverse().find((m: any) => {
-    if (m?.role !== 'user') return false;
-    const t = typeof m.content === 'string' ? m.content : '';
-    return !t.startsWith('【系统提醒】');
-  }) || messages[messages.length - 1];
-  const userText = String(
-    typeof lastMsg?.content === 'string'
-      ? lastMsg.content
-      : Array.isArray(lastMsg?.content)
-      ? lastMsg.content.map((c: any) => c.text || '').join(' ')
-      : ''
-  );
+  // 2. 规则 2：会话中已经使用过公司内部排障工具 -> 保持 L2（粘性路由）
+  // 以前逐条请求按关键词分流，"继续 / 为什么 / 好的"这类追问会被切到 L1 并剥离公司工具，导致排查中途断档
+  if (conversationUsedCompanyTools(messages)) {
+    return {
+      targetModel: 'gemini',
+      tier: 'l2',
+      matchedRule: 'CONVERSATION_STICKY_L2',
+      reason: '本会话已使用公司内部排障工具，后续追问保持在 Gemini 深度排障引擎',
+    };
+  }
+
+  // 3. 规则 3：检查是否涉及内部企业代码或数据库查询 -> 强制走 L2 (Gemini)
+  // 以最后一条真实用户输入为准，跳过 harness 注入的提醒/纠偏消息
+  const lastMsg = [...messages].reverse().find((m: any) => m?.role === 'user' && !isHarnessReminderText(messageText(m)));
+  const userText = messageText(lastMsg);
 
   const L2_KEYWORDS_REGEX = /(数据库|查库|sql|order|balance|hotel|refund|退款|流水|账单|报错|异常|trace|stacktrace|代码|controller|service|mapper|bug|崩溃|500|502|订单|单号|工单|支付|出票|退票|改签|退改|机票|火车票|航班|乘机|旅客|乘客|推送|转圈|用户|客户|商户|验证码|短信|下单|付款|收款|应收|实收|核销|入账|对账|结算|结账|充值|提现|转账|到账|未到账|收不到|不成功|扣款|手续费|服务费|发票|开票|报销|差额|行程|客票|票号|改期|航变|延误|取消|值机|座位|登机|行李|酒店|房型|预订|订房|门票|账号|金额|多少钱|差多少|系统|故障|payment|失败|搜不出|查不出|搜不到|查不到|不展示|出不来|白屏)/i;
   if (L2_KEYWORDS_REGEX.test(userText)) {

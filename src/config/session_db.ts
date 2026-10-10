@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import type { Message } from '../types/index.js';
+import { detectVerdict, type Verdict } from '../utils/answer_verdict.js';
 
 export interface PersistedSession {
   id: string;
@@ -23,6 +24,18 @@ export interface SessionListItem {
   lastActiveAt: string;
   messageCount: number;
   lastSnippet: string;
+  /** 最近一次回答标注的把握程度：已确认 / 推断 / 无法确定；回答里没有标注时为 null */
+  verdict: Verdict | null;
+}
+
+/** 最后一条最终回答（不含工具调用轮次和 harness 改写的"[...]"占位） */
+function lastFinalAnswer(msgs: Message[]): string {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m.role !== 'assistant' || (m.tool_calls && m.tool_calls.length > 0)) continue;
+    if (typeof m.content === 'string' && m.content.trim() && !/^\[[^\]]{0,80}\]$/.test(m.content.trim())) return m.content;
+  }
+  return '';
 }
 
 export class SessionDatabase {
@@ -138,6 +151,7 @@ export class SessionDatabase {
           lastActiveAt: r.last_active_at,
           messageCount: userOrAssistantMsgs.length,
           lastSnippet,
+          verdict: detectVerdict(lastFinalAnswer(msgs)),
         };
       });
     } catch (err) {
@@ -155,5 +169,10 @@ export class SessionDatabase {
       console.error('[SessionDatabase] 删除会话失败:', err);
       return false;
     }
+  }
+
+  /** 关闭数据库连接（测试中用临时库时，关闭后才能删除文件） */
+  public close(): void {
+    this.db.close();
   }
 }

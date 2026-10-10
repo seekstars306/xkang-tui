@@ -3,7 +3,7 @@ import path from 'node:path';
 import { validatePathInRepo } from '../dist/tools/sandbox.js';
 import { writeFileTool } from '../dist/tools/write.js';
 import { editFileTool } from '../dist/tools/edit.js';
-import { readFileTool } from '../dist/tools/read.js';
+import { executeReadFileLines } from '../server/dist/tools/code_search.js';
 import { validateCommandPolicy } from '../dist/tools/powershell_policy.js';
 import { runPowershellTool } from '../dist/tools/powershell.js';
 
@@ -101,7 +101,7 @@ async function runHardcodedSecuritySuites() {
     );
 
     await assertAsyncHardcodedBlocked(`read_file_lines 尝试读取敏感凭证 [${gp}]`, () =>
-      readFileTool.execute({ file_path: gp }, { repoPath: ISOLATED_TEST_REPO })
+      executeReadFileLines({ filePath: gp }, { codeRepoPath: ISOLATED_TEST_REPO })
     );
   }
 

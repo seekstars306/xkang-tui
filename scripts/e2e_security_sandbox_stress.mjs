@@ -5,7 +5,7 @@ import { validateCommandPolicy } from '../dist/tools/powershell_policy.js';
 import { validatePathInRepo } from '../dist/tools/sandbox.js';
 import { writeFileTool } from '../dist/tools/write.js';
 import { editFileTool } from '../dist/tools/edit.js';
-import { readFileTool } from '../dist/tools/read.js';
+import { executeReadFileLines } from '../server/dist/tools/code_search.js';
 import { webFetchTool } from '../dist/tools/web_fetch.js';
 import { executeCodeGraph } from '../server/dist/tools/codegraph.js';
 import { loadServerConfig } from '../server/dist/config.js';
@@ -140,7 +140,7 @@ async function runSecuritySuites() {
     );
 
     await assertAsyncBlocked(`read_file_lines 越界读取拦截 [${pe.name}]`, () =>
-      readFileTool.execute({ file_path: pe.p }, { repoPath: TEST_SANDBOX_DIR })
+      executeReadFileLines({ filePath: pe.p }, { codeRepoPath: TEST_SANDBOX_DIR })
     );
   }
 

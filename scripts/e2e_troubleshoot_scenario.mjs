@@ -16,6 +16,8 @@ process.env.XKANG_TOKENS = `${EMP_TOKEN}:SupportSpecialist`;
 process.env.XKANG_ADMIN_TOKENS = `adm_boss:AdminUser`;
 process.env.XKANG_LLM_MOCK = '1';
 
+// 测试实例不能执行定时代码同步（会对 D:\skt_project 执行 git pull / reset）
+process.env.CODE_SYNC_ENABLED = 'false';
 const { server } = startServer();
 const BASE_URL = `http://localhost:${TEST_PORT}`;
 const SKT_PROJECT_ROOT = 'D:\\skt_project';
@@ -102,6 +104,8 @@ async function runScenarioTest() {
   } finally {
     server.close();
   }
+  // MCP SSE 长连接会让 server.close() 一直等待，测试通过后显式退出
+  process.exit(0);
 }
 
 runScenarioTest().catch((err) => {

@@ -21,6 +21,8 @@ if (!fs.existsSync(releasesDir)) {
 const releaseExePath = path.join(releasesDir, 'xhang.exe');
 fs.writeFileSync(releaseExePath, Buffer.from(`MZ_SKT_STANDALONE_RELEASE_v1.1.0_BINARY_PAYLOAD_TEST_FULL_DATA_FOR_CUSTOMER_SERVICE_AUTO_UPDATER_STREAM`));
 
+// 测试实例不能执行定时代码同步（会对 D:\skt_project 执行 git pull / reset）
+process.env.CODE_SYNC_ENABLED = 'false';
 const { server } = startServer();
 const BASE_URL = `http://localhost:${TEST_PORT}`;
 

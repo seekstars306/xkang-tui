@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const CURRENT_CLIENT_VERSION = '1.1.99';
+export const CURRENT_CLIENT_VERSION = '2.0.0';
 
 export interface RemoteVersionInfo {
   version: string;

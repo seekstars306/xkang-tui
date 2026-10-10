@@ -1,4 +1,6 @@
 import { startServer } from '../server/dist/index.js';
+import { ActiveModelManager } from '../server/dist/model_state.js';
+import { AppDatabase } from '../server/dist/db.js';
 import { ServerProxyAdapter } from '../dist/adapters/server_proxy.js';
 import fs from 'node:fs';
 
@@ -15,6 +17,8 @@ process.env.ACTIVE_MODEL_PATH = TEST_PERSIST_PATH;
 process.env.AUDIT_LOG_PATH = TEST_AUDIT_PATH;
 process.env.XKANG_LLM_MOCK = '1'; // Enable mock LLM mode
 
+// 测试实例不能执行定时代码同步（会对 D:\\skt_project 执行 git pull / reset）
+process.env.CODE_SYNC_ENABLED = 'false';
 const { server, modelManager } = startServer();
 
 const BASE_URL = `http://localhost:${TEST_PORT}`;
@@ -184,14 +188,11 @@ async function runAllTests() {
 
     // 6. 持久化文件校验
     console.log('\n▶ [6/7] 验证活跃模型已持久化到磁盘...');
-    if (fs.existsSync(TEST_PERSIST_PATH)) {
-      const persisted = JSON.parse(fs.readFileSync(TEST_PERSIST_PATH, 'utf-8'));
-      console.log('   持久化文件 active_model.json 内容:', persisted);
-      if (persisted.activeModel !== 'grok') {
-        throw new Error(`持久化模型应为 grok，实际为 ${persisted.activeModel}`);
-      }
-    } else {
-      throw new Error('持久化文件未生成');
+    // 活跃模型持久化在 SQLite (sys_configs)；新建一个管理器实例模拟服务重启后读取
+    const reloaded = new ActiveModelManager(AppDatabase.getInstance().db).getActive();
+    console.log('   重启后读取到的活跃模型:', reloaded);
+    if (reloaded !== 'grok') {
+      throw new Error(`持久化模型应为 grok，实际为 ${reloaded}`);
     }
 
     // 7. 客户端 ServerProxyAdapter 整体联动验证

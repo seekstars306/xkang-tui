@@ -10,26 +10,49 @@ export interface DatabaseToolArgs {
   limit?: number;
 }
 
-// Global connection pool
-let dbPool: mysql.Pool | null = null;
-// 运行时自学的「表名→库」映射缓存：MyCat 要求查询带库前缀或先 USE，
-// 模型经常写裸表名导致 "No MyCAT Database selected"；成功执行过 db.table 后
-// 记录映射，后续裸表名查询自动路由到正确库（纯运行时自适应，无业务硬编码）
-const tableDbCache = new Map<string, string>();
+const DEFAULT_ROW_LIMIT = 50;
+const MAX_ROW_LIMIT = 200;
+// 工具自身把输出控制在预算内（超出时按行裁剪并明确说明），避免被 harness 从 JSON 中间硬截断
+const RESULT_CHAR_BUDGET = 12000;
+const CELL_MAX_CHARS = 300;
+const QUERY_TIMEOUT_MS = 10000;
+const META_TIMEOUT_MS = 6000;
 
-function learnTableDbMappings(sql: string, usedDb: string): void {
+let dbPool: mysql.Pool | null = null;
+// 运行时自学的「表名→库」映射：MyCat 要求带库前缀或先 USE，模型常写裸表名；
+// 成功执行过 db.table 后记录映射，后续裸表名查询自动路由（只是库表归属知识，各会话共享无副作用）
+const tableDbCache = new Map<string, string>();
+let knownDatabases: { list: string[]; at: number } | null = null;
+
+function matchKnownDb(name: string, known: string[]): string | null {
+  const lower = name.toLowerCase();
+  return known.find((d) => d.toLowerCase() === lower) || null;
+}
+
+function learnTableDbMappings(sql: string, usedDb: string, known: string[]): void {
   if (!usedDb) return;
   for (const m of sql.matchAll(/`?([a-zA-Z0-9_]+)`?\s*\.\s*`?([a-zA-Z0-9_]+)`?/g)) {
-    if (m[1].toLowerCase() !== 'information_schema') {
-      tableDbCache.set(m[2].toLowerCase(), m[1]);
+    // 只学习 "真实库名.表名"，跳过表别名 (如 u.id)
+    const db = matchKnownDb(m[1], known);
+    if (db && db.toLowerCase() !== 'information_schema') {
+      tableDbCache.set(m[2].toLowerCase(), db);
     }
   }
-  for (const m of sql.matchAll(/\b(?:from|join)\s+`?([a-zA-Z0-9_]+)`?/gi)) {
+  for (const m of sql.matchAll(/\b(?:from|join)\s+`?([a-zA-Z0-9_]+)`?(?![\w.]|\s*\.)/gi)) {
     const t = m[1].toLowerCase();
-    if (!tableDbCache.has(t) && !['select', 'where', 'on', 'and', 'or', 'dual'].includes(t)) {
+    if (!tableDbCache.has(t) && !matchKnownDb(t, known) && !['select', 'where', 'on', 'and', 'or', 'dual'].includes(t)) {
       tableDbCache.set(t, usedDb);
     }
   }
+}
+
+/** 从 SQL 中的 `库名.表名` 推断目标库；只认真实存在的库名，避免把表别名 (u.id) 当成库 */
+export function inferDbFromQualifiedNames(sql: string, known: string[]): string | null {
+  for (const m of sql.matchAll(/`?([a-zA-Z0-9_]+)`?\s*\.\s*`?([a-zA-Z0-9_]+)`?/g)) {
+    const db = matchKnownDb(m[1], known);
+    if (db) return db;
+  }
+  return null;
 }
 
 function inferDbFromCache(sql: string): string | null {
@@ -41,30 +64,46 @@ function inferDbFromCache(sql: string): string | null {
   return null;
 }
 
+/** 数据库凭据只从环境变量读取（server/.env），代码中不再保留任何默认账号密码 */
+export function getDbConnectionConfig(): mysql.ConnectionOptions | null {
+  const host = process.env.COMPANY_DB_HOST;
+  const user = process.env.COMPANY_DB_USER;
+  const password = process.env.COMPANY_DB_PASSWORD;
+  if (!host || !user || !password) return null;
+  return {
+    host,
+    port: parseInt(process.env.COMPANY_DB_PORT || '8066', 10),
+    user,
+    password,
+    connectTimeout: 8000,
+    multipleStatements: false,
+    supportBigNumbers: true,
+    bigNumberStrings: true,
+    // 日期时间按库内原样字符串返回；否则会被转成 JS Date 再序列化成 UTC（差 8 小时），模型据此给出错误时间、查错日志窗口
+    dateStrings: true,
+  };
+}
+
+const MISSING_DB_CONFIG = '服务端未配置 COMPANY_DB_HOST / COMPANY_DB_USER / COMPANY_DB_PASSWORD，无法查询数据库，请联系管理员在 server/.env 中配置。';
+
 export function getDbPool(): mysql.Pool {
   if (!dbPool) {
-    const host = process.env.COMPANY_DB_HOST || '10.197.236.175';
-    const port = parseInt(process.env.COMPANY_DB_PORT || '8066', 10);
-    const user = process.env.COMPANY_DB_USER || 'zhangzhao';
-    const password = process.env.COMPANY_DB_PASSWORD || '';
-
-    dbPool = mysql.createPool({
-      host,
-      port,
-      user,
-      password,
-      waitForConnections: true,
-      connectionLimit: 5,
-      connectTimeout: 8000,
-      multipleStatements: false,
-      supportBigNumbers: true,
-      bigNumberStrings: true,
-    });
+    const cfg = getDbConnectionConfig();
+    if (!cfg) throw new Error(MISSING_DB_CONFIG);
+    dbPool = mysql.createPool({ ...cfg, waitForConnections: true, connectionLimit: 8 });
   }
   return dbPool;
 }
 
-// Forbidden SQL keywords for security inspection (destructive commands)
+/** 关闭连接池（测试与进程退出时使用） */
+export async function closeDbPool(): Promise<void> {
+  if (dbPool) {
+    const pool = dbPool;
+    dbPool = null;
+    await pool.end();
+  }
+}
+
 const FORBIDDEN_SQL_PATTERNS = [
   /\binsert\b/i,
   /\bupdate\b/i,
@@ -89,19 +128,26 @@ const FORBIDDEN_SQL_PATTERNS = [
   /\bload\s+data\b/i,
 ];
 
+/** 去掉模型常带的 ```sql 代码块包裹与首尾分号 */
+export function normalizeSqlText(sql: string): string {
+  return sql
+    .replace(/^```(?:sql)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim()
+    .replace(/^;+|;+$/g, '')
+    .trim();
+}
+
 /**
  * Validate that SQL query is strictly read-only and free of dangerous multi-statements
  */
 export function validateReadOnlySql(sql: string): { valid: boolean; reason?: string } {
-  // Strip markdown code block wrappers (```sql ... ```) if passed by LLM
-  const stripped = sql.replace(/^```(?:sql)?\s*/i, '').replace(/\s*```$/i, '').trim();
-  const trimmed = stripped.replace(/^;+|;+$/g, '').trim();
+  const trimmed = normalizeSqlText(sql);
 
   if (!trimmed) {
     return { valid: false, reason: 'SQL 语句不能为空。' };
   }
 
-  // Check for statement chaining with semicolons
   if (trimmed.includes(';')) {
     return { valid: false, reason: '禁止在单个请求中执行多条分号连接的 SQL 语句。' };
   }
@@ -114,7 +160,6 @@ export function validateReadOnlySql(sql: string): { valid: boolean; reason?: str
     };
   }
 
-  // Check leading command
   const startsWithReadOnly = /^(select|show|explain|desc|describe)\b/i.test(trimmed);
   if (!startsWithReadOnly) {
     return {
@@ -123,7 +168,6 @@ export function validateReadOnlySql(sql: string): { valid: boolean; reason?: str
     };
   }
 
-  // Check forbidden keywords
   for (const pattern of FORBIDDEN_SQL_PATTERNS) {
     if (pattern.test(trimmed)) {
       return {
@@ -137,47 +181,334 @@ export function validateReadOnlySql(sql: string): { valid: boolean; reason?: str
 }
 
 /**
- * Normalize an LLM-supplied keyword string into a list of individual keywords.
- * Handles common LLM conventions: OR / || / | / commas / whitespace separators,
- * surrounding quotes, and mixed case. Returns deduplicated, non-empty tokens.
- *
- * Mirrors the lenient normalization applied in code_search.ts so models that pass
- * "A OR B", "a|b|c", or "a, b" all behave the same as a clean multi-keyword list.
+ * 把等值比较 / IN 列表中 11 位以上的裸数字字面量加上引号。
+ * 单号、雪花 ID、手机号、票号多存为字符串列：`varchar列 = 1541...` 会触发隐式类型转换，
+ * 既用不上索引（全表扫描 → 超时），又按 double 比较产生精度误差（可能命中相邻 ID）。
+ * 对整数列，MySQL 会把字符串常量转回整数比较，同样能走索引，因此加引号对两种列都安全。
  */
-function normalizeKeywords(raw: string): string[] {
-  return raw
-    .replace(/^["'`]|["'`]$/g, '') // strip surrounding quotes
-    .split(/\s+(?:or|or|OR)\s+|\s*\|\|?\s*|,|\s+/i) // OR / || / | / comma / whitespace
-    .map((k) => k.trim().replace(/^["'`]|["'`]$/g, '').toLowerCase())
-    .filter((k) => k.length > 0)
-    .filter((k, i, arr) => arr.indexOf(k) === i); // dedupe
+export function quoteLongIdLiterals(sql: string): { sql: string; changed: boolean } {
+  let out = '';
+  let changed = false;
+  let i = 0;
+  while (i < sql.length) {
+    const ch = sql[i];
+    if (ch === "'" || ch === '"' || ch === '`') {
+      let j = i + 1;
+      while (j < sql.length) {
+        if (sql[j] === '\\' && ch !== '`') {
+          j += 2;
+          continue;
+        }
+        if (sql[j] === ch) {
+          if (sql[j + 1] === ch) {
+            j += 2;
+            continue;
+          }
+          break;
+        }
+        j++;
+      }
+      out += sql.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+    if (ch >= '0' && ch <= '9' && (i === 0 || !/[\w.$]/.test(sql[i - 1]))) {
+      let j = i;
+      while (j < sql.length && sql[j] >= '0' && sql[j] <= '9') j++;
+      const num = sql.slice(i, j);
+      const boundaryOk = j >= sql.length || !/[\w.]/.test(sql[j]);
+      if (num.length >= 11 && boundaryOk) {
+        const before = out.replace(/\s+$/, '');
+        const last2 = before.slice(-2);
+        const last1 = before.slice(-1);
+        const isEquality = last2 === '<>' || last2 === '!=' || (last1 === '=' && last2 !== '>=' && last2 !== '<=');
+        const isListItem = last1 === '(' || last1 === ',';
+        const inLimit = /\blimit\s+(\d+\s*,\s*)?$/i.test(before) || /\boffset\s*$/i.test(before);
+        if ((isEquality || isListItem) && !inLimit) {
+          out += `'${num}'`;
+          changed = true;
+          i = j;
+          continue;
+        }
+      }
+      out += num;
+      i = j;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return { sql: out, changed };
+}
+
+/** SELECT 未写 LIMIT 时追加 LIMIT n+1：多取一行用来判断"后面还有没有"，而不是静默截在第 n 行 */
+export function applyRowLimit(sql: string, limit: number): { sql: string; probeLimit: number | null; userLimit: number | null } {
+  if (!/^select\b/i.test(sql)) return { sql, probeLimit: null, userLimit: null };
+  const limitMatches = Array.from(sql.matchAll(/\blimit\s+(\d+)(?:\s*,\s*(\d+)|\s+offset\s+\d+)?/gi));
+  if (limitMatches.length === 0) {
+    return { sql: `${sql} LIMIT ${limit + 1}`, probeLimit: limit, userLimit: null };
+  }
+  const last = limitMatches[limitMatches.length - 1];
+  const userLimit = Number(last[2] ?? last[1]);
+  return { sql, probeLimit: null, userLimit: Number.isFinite(userLimit) ? userLimit : null };
+}
+
+function formatCell(value: unknown): unknown {
+  if (value === null || value === undefined) return null;
+  if (Buffer.isBuffer(value)) return `[二进制 ${value.length} 字节]`;
+  if (value instanceof Date) {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`;
+  }
+  if (typeof value === 'string' && value.length > CELL_MAX_CHARS) {
+    return value.slice(0, CELL_MAX_CHARS) + `…[文本截断，共 ${value.length} 字符]`;
+  }
+  if (typeof value === 'object') {
+    const s = JSON.stringify(value);
+    return s.length > CELL_MAX_CHARS ? s.slice(0, CELL_MAX_CHARS) + `…[截断，共 ${s.length} 字符]` : s;
+  }
+  return value;
+}
+
+export interface FormatRowsOptions {
+  database: string;
+  executedSql: string;
+  rows: Array<Record<string, unknown>>;
+  limit: number;
+  probeLimit: number | null;
+  userLimit: number | null;
+  notes?: string[];
+  budget?: number;
 }
 
 /**
- * Truncate overly long values (e.g. certificates, long JSON blobs) to prevent context window overflow
+ * 紧凑输出：columns + 行数组（不再逐行重复字段名、不再 2 空格缩进），全为 NULL 的列单独列出。
+ * 结果不完整（超过 limit / 撞到用户 LIMIT / 超出输出预算）时一定显式标注，防止模型把部分数据当全量。
  */
-function sanitizeRow(row: Record<string, unknown>): Record<string, unknown> {
-  const sanitized: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(row)) {
-    if (typeof value === 'string' && value.length > 300) {
-      sanitized[key] = value.slice(0, 300) + `... [文本截断，共 ${value.length} 字符]`;
-    } else {
-      sanitized[key] = value;
-    }
+export function formatRowsResult(opts: FormatRowsOptions): string {
+  const budget = opts.budget ?? RESULT_CHAR_BUDGET;
+  const fetched = opts.rows;
+  const cap = Math.min(opts.limit, MAX_ROW_LIMIT);
+  const hasMore = opts.probeLimit != null ? fetched.length > opts.probeLimit : fetched.length > cap;
+  const maybeMore = opts.userLimit != null && fetched.length >= Math.min(opts.userLimit, cap);
+  const kept = fetched.slice(0, opts.probeLimit != null ? opts.probeLimit : cap);
+
+  const columns = kept.length > 0 ? Object.keys(kept[0]) : [];
+  const allNullColumns = columns.filter((c) => kept.every((r) => r[c] === null || r[c] === undefined));
+  const cols = columns.filter((c) => !allNullColumns.includes(c));
+  let rowArrays = kept.map((r) => cols.map((c) => formatCell(r[c])));
+  const truncatedCells = kept.reduce((total, row) => total + cols.filter(column => {
+    const value = row[column];
+    return typeof value === 'string' ? value.length > CELL_MAX_CHARS : value !== null && typeof value === 'object' && !(value instanceof Date) && JSON.stringify(value).length > CELL_MAX_CHARS;
+  }).length, 0);
+
+  const notes = [...(opts.notes || [])];
+  if (hasMore) {
+    notes.push(
+      `结果不完整：满足条件的数据超过 ${kept.length} 行，这里只返回了前 ${kept.length} 行。需要完整名单或统计时，请先用 COUNT(*)/GROUP BY 得到总数，再加过滤条件、只选必要列或用 LIMIT n OFFSET m 分页取完，不要把这部分结果当作全部。`
+    );
+  } else if (maybeMore) {
+    notes.push(`返回行数恰好等于 SQL 中的 LIMIT ${opts.userLimit}，后面可能还有更多数据。`);
   }
-  return sanitized;
+
+  const build = (rowsForOutput: unknown[][], droppedByOutput: number) => {
+    const outNotes = [...notes];
+    if (droppedByOutput > 0) {
+      outNotes.push(
+        `因输出长度限制只展示了前 ${rowsForOutput.length} 行（本次实际取回 ${kept.length} 行，另有 ${droppedByOutput} 行未展示）。请减少返回列（避免 SELECT *）或分页查询。`
+      );
+    }
+    return JSON.stringify({
+      status: 'success',
+      action: 'query',
+      database: opts.database,
+      executedSql: opts.executedSql,
+      rowCount: rowsForOutput.length,
+      complete: !hasMore && !maybeMore && droppedByOutput === 0 && truncatedCells === 0,
+      ...(truncatedCells ? { truncatedCells, truncated: true } : {}),
+      ...(outNotes.length ? { notes: outNotes } : {}),
+      columns: cols,
+      ...(allNullColumns.length ? { allNullColumns } : {}),
+      rows: rowsForOutput,
+    });
+  };
+
+  let output = build(rowArrays, 0);
+  if (output.length > budget && rowArrays.length > 1) {
+    let lo = 1;
+    let hi = rowArrays.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (build(rowArrays.slice(0, mid), kept.length - mid).length <= budget) lo = mid;
+      else hi = mid - 1;
+    }
+    rowArrays = rowArrays.slice(0, lo);
+    output = build(rowArrays, kept.length - lo);
+  }
+  return output;
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMsg: string): Promise<T> {
-  let timer: NodeJS.Timeout;
+export class QueryTimeoutError extends Error {
+  constructor(label: string, ms: number) {
+    super(`${label}超时 (${Math.round(ms / 1000)}s)`);
+    this.name = 'QueryTimeoutError';
+  }
+}
+
+/** 连接不上数据库（网络不通、库宕机、连接池耗尽），与慢查询区分开：这不是 SQL 写法问题 */
+export class DbConnectError extends Error {
+  constructor(cause: unknown) {
+    super(`无法连接数据库: ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = 'DbConnectError';
+  }
+}
+
+export const DB_CONNECT_GUIDANCE =
+  '这是数据库连接失败（网络不通或数据库暂不可用），与 SQL 写法无关，换写法重试没有意义。请如实告诉客服"数据暂时无法查询"，可以先用代码检索等其他途径排查，稍后再重试查库。';
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
   return Promise.race([
     promise,
     new Promise<T>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(errorMsg)), timeoutMs);
+      timer = setTimeout(() => reject(new QueryTimeoutError(label, timeoutMs)), timeoutMs);
     }),
   ]).finally(() => {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
   });
+}
+
+type KillConnectionFactory = () => Promise<{ query: (sql: string) => Promise<unknown>; end: () => Promise<void> }>;
+
+const defaultKillConnectionFactory: KillConnectionFactory = async () => {
+  const cfg = getDbConnectionConfig();
+  if (!cfg) throw new Error(MISSING_DB_CONFIG);
+  return mysql.createConnection(cfg);
+};
+
+/**
+ * 超时后真正取消服务端仍在执行的语句：只放弃等待会让慢查询继续占着库，
+ * 堆积后连按主键查都会超时（历史会话中出现过 29 次查询 25 次超时）。
+ * 先 KILL QUERY，不支持时（部分 MyCat 版本）退回 KILL 连接；均为尽力而为，失败不影响主流程。
+ */
+export async function killRunningQuery(
+  threadId: number | undefined,
+  factory: KillConnectionFactory = defaultKillConnectionFactory
+): Promise<'killed' | 'skipped' | 'failed'> {
+  if (!threadId || !Number.isInteger(threadId)) return 'skipped';
+  let conn: Awaited<ReturnType<KillConnectionFactory>> | null = null;
+  try {
+    conn = await withTimeout(factory(), 4000, '建立终止连接');
+    try {
+      await withTimeout(conn.query(`KILL QUERY ${threadId}`), 3000, 'KILL QUERY ');
+    } catch {
+      await withTimeout(conn.query(`KILL ${threadId}`), 3000, 'KILL ');
+    }
+    return 'killed';
+  } catch {
+    return 'failed';
+  } finally {
+    if (conn) {
+      try {
+        await conn.end();
+      } catch {}
+    }
+  }
+}
+
+function threadIdOf(conn: mysql.PoolConnection): number | undefined {
+  const anyConn = conn as any;
+  return anyConn.threadId ?? anyConn.connection?.threadId;
+}
+
+export interface QueryContext {
+  conn: mysql.PoolConnection;
+  timedOut: boolean;
+}
+
+/** 在已获取的连接上执行语句；超时会尝试终止服务端执行并把连接标记为需销毁 */
+export async function runQuery<T = unknown>(
+  ctx: QueryContext,
+  sql: string,
+  values: unknown[] | undefined,
+  timeoutMs: number,
+  label: string
+): Promise<T> {
+  try {
+    const result = values ? await withTimeout(ctx.conn.query(sql, values), timeoutMs, label) : await withTimeout(ctx.conn.query(sql), timeoutMs, label);
+    return result as T;
+  } catch (err) {
+    if (err instanceof QueryTimeoutError) {
+      ctx.timedOut = true;
+      await killRunningQuery(threadIdOf(ctx.conn));
+    }
+    throw err;
+  }
+}
+
+/** 获取连接并在结束后归还；超时/断连后的连接直接销毁，避免把"中毒连接"还给连接池 */
+export async function withDbConnection<T>(fn: (ctx: QueryContext) => Promise<T>): Promise<T> {
+  const pool = getDbPool();
+  let conn: mysql.PoolConnection;
+  try {
+    conn = await withTimeout(pool.getConnection(), META_TIMEOUT_MS, '获取数据库连接');
+  } catch (err) {
+    throw new DbConnectError(err);
+  }
+  const ctx: QueryContext = { conn, timedOut: false };
+  try {
+    return await fn(ctx);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/ECONNRESET|EPIPE|PROTOCOL_CONNECTION_LOST/i.test(msg)) ctx.timedOut = true;
+    throw err;
+  } finally {
+    if (ctx.timedOut) {
+      try {
+        (conn as any).destroy();
+      } catch {
+        try {
+          conn.release();
+        } catch {}
+      }
+    } else {
+      try {
+        conn.release();
+      } catch {}
+    }
+  }
+}
+
+function safeIdent(name: string): string {
+  return name.replace(/`/g, '');
+}
+
+async function getKnownDatabases(ctx: QueryContext): Promise<string[]> {
+  if (knownDatabases && Date.now() - knownDatabases.at < 10 * 60 * 1000) return knownDatabases.list;
+  const [rows] = await runQuery<any[]>(ctx, 'SHOW DATABASES', undefined, META_TIMEOUT_MS, '查询数据库清单');
+  const list = (rows as Array<Record<string, unknown>>).map((r) => String(r.DATABASE || Object.values(r)[0]));
+  knownDatabases = { list, at: Date.now() };
+  return list;
+}
+
+/**
+ * Normalize an LLM-supplied keyword string into a list of individual keywords.
+ * Handles OR / || / | / commas / whitespace separators and surrounding quotes.
+ */
+function normalizeKeywords(raw: string): string[] {
+  return raw
+    .replace(/^["'`]|["'`]$/g, '')
+    .split(/\s+or\s+|\s*\|\|?\s*|,|\s+/i)
+    .map((k) => k.trim().replace(/^["'`]|["'`]$/g, '').toLowerCase())
+    .filter((k) => k.length > 0)
+    .filter((k, i, arr) => arr.indexOf(k) === i);
+}
+
+const SLOW_QUERY_GUIDANCE =
+  '该查询已超时并已尝试终止服务端执行。常见原因是没有用上索引：1) 先用 action:"describe_table" 查看表的索引列，改用索引列等值查询（单号、ID 请加引号按字符串比较）；2) 大表加 create_time 等时间窗口；3) 不要对大表做无边界的 LIKE \'%关键词%\'，也不要把多个列用 OR 串起来；4) 不要原样重试同一查询。';
+
+function errorJson(message: string, extra: Record<string, unknown> = {}): string {
+  return JSON.stringify({ status: 'error', message, ...extra });
 }
 
 export async function executeDatabaseTool(
@@ -185,401 +516,250 @@ export async function executeDatabaseTool(
   _config: ServerConfig,
   user: string
 ): Promise<string> {
-  const pool = getDbPool();
-  let conn: mysql.PoolConnection | null = null;
-  let hadTimeout = false;
-  // 排障引导：查库结果尾部追加日志维度提醒（数据库只能证明数据状态，无法证明接口行为）
-  const LOG_HINT = '\n\n[排障提示] 以上仅为数据库落库数据。若排查”查不到/不展示/失败/转圈”等功能异常，数据库正常不代表接口正常——请继续调用 search_logs 查询相关微服务日志（有单号/时间用 target_time+keyword，无线索用 minutes_ago 盲查），获取接口调用、异常堆栈与下游响应证据后再下结论。';
-
-  // 超时等异常后连接上可能仍挂着未完成的慢查询，release 会把"中毒连接"还给池子拖垮后续所有查询，必须直接销毁
-  const SLOW_QUERY_GUIDANCE =
-    '该查询已超时中断。若目标为日志/流水/历史记录类大表，请：1) 先用 SHOW INDEX FROM 表名 确认索引列，改用索引列等值查询（如 WHERE order_id = 单号）；2) 或增加 create_time 窄时间窗口（±1天内）与用户名等过滤条件；3) 严禁对大表执行无时间边界的 LIKE %关键词% 全表扫描，也不要原样重试同一查询形态。';
-
-  // 连续失败计数：识别数据库通道整体降级并引导切换排查通道
-  let consecutiveDbFailures = (globalThis as any).__xkangDbFailures || 0;
-
-  const wrapWithLogHint = (resultJson: string): string => {
-    try {
-      const obj = JSON.parse(resultJson);
-      if (obj.status === 'success' && !obj.nextStepHint) {
-        obj.nextStepHint = LOG_HINT;
-      }
-      return JSON.stringify(obj, null, 2);
-    } catch {
-      return resultJson;
-    }
-  };
+  if (!getDbConnectionConfig()) {
+    return errorJson(MISSING_DB_CONFIG);
+  }
+  const action = args.action || 'list_databases';
 
   try {
-    conn = await withTimeout(pool.getConnection(), 6000, '获取数据库连接超时 (6s)');
-    const action = args.action || 'list_databases';
-
-    const result = wrapWithLogHint(await (async () => { switch (action) {
-      case 'list_databases': {
-        const [rows] = await withTimeout(conn.query('SHOW DATABASES'), 6000, '查询数据库清单超时 (6s)');
-        const dbList = (rows as Array<Record<string, unknown>>).map(
-          (r) => String(r.DATABASE || Object.values(r)[0])
-        );
-
-        return JSON.stringify(
-          {
+    return await withDbConnection(async (ctx) => {
+      switch (action) {
+        case 'list_databases': {
+          const [rows] = await runQuery<any[]>(ctx, 'SHOW DATABASES', undefined, META_TIMEOUT_MS, '查询数据库清单');
+          const dbList = (rows as Array<Record<string, unknown>>).map((r) => String(r.DATABASE || Object.values(r)[0]));
+          return JSON.stringify({
             status: 'success',
-            action: 'list_databases',
-            queriedBy: user,
+            action,
             totalDatabases: dbList.length,
             databases: dbList,
-            note: '可通过 action: “list_tables”, database: “<库名>” 查看各库内的表清单。',
-          },
-          null,
-          2
-        );
-      }
-
-      case 'list_tables': {
-        const db = args.database?.trim();
-        if (!db) {
-          return JSON.stringify({
-            status: 'error',
-            message: '缺少必填参数 database（请指定要查看的数据库名称，如 “payment” 或 “skt”）',
+            note: '可用 action:"list_tables", database:"<库名>" 查看各库内的表。',
           });
         }
 
-        await withTimeout(conn.query(`USE \`${db.replace(/`/g, '')}\``), 6000, '切换数据库超时 (6s)');
-        const [tables] = await withTimeout(conn.query('SHOW TABLES'), 6000, '查询数据表清单超时 (6s)');
-        let tableList = (tables as Array<Record<string, unknown>>).map(
-          (t) => String(Object.values(t)[0])
-        );
+        case 'list_tables': {
+          const db = args.database?.trim();
+          if (!db) {
+            return errorJson('缺少必填参数 database（如 "skt" 或 "payment"）');
+          }
+          await runQuery(ctx, `USE \`${safeIdent(db)}\``, undefined, META_TIMEOUT_MS, '切换数据库');
+          const [tables] = await runQuery<any[]>(ctx, 'SHOW TABLES', undefined, META_TIMEOUT_MS, '查询数据表清单');
+          let tableList = (tables as Array<Record<string, unknown>>).map((t) => String(Object.values(t)[0]));
+          if (args.keyword?.trim()) {
+            const keywords = normalizeKeywords(args.keyword);
+            if (keywords.length > 0) {
+              tableList = tableList.filter((t) => keywords.some((kw) => t.toLowerCase().includes(kw)));
+            }
+          }
+          const shown = tableList.slice(0, 300);
+          return JSON.stringify({
+            status: 'success',
+            action,
+            database: db,
+            matchedCount: tableList.length,
+            complete: shown.length === tableList.length,
+            ...(shown.length < tableList.length ? { note: `只列出前 ${shown.length} 个表，请用 keyword 过滤缩小范围。` } : {}),
+            tables: shown,
+          });
+        }
 
-        // Filter by pattern if provided (supports multi-keyword via OR/|/comma/whitespace)
-        if (args.keyword?.trim()) {
-          const keywords = normalizeKeywords(args.keyword);
-          if (keywords.length > 0) {
-            tableList = tableList.filter((t) => {
-              const tLower = t.toLowerCase();
-              return keywords.some((kw) => tLower.includes(kw));
+        case 'describe_table': {
+          let db = args.database?.trim();
+          let table = args.tableName?.trim() || args.keyword?.trim();
+          if (table && table.includes('.')) {
+            const parts = table.split('.');
+            if (parts.length === 2) {
+              db = db || parts[0].replace(/[`'"]/g, '').trim();
+              table = parts[1].replace(/[`'"]/g, '').trim();
+            }
+          }
+          if (table && /\s+or\s+|\||,|\s+/i.test(table)) {
+            const candidates = normalizeKeywords(table);
+            if (candidates.length > 0) table = candidates[0];
+          }
+          const defaulted = !db;
+          if (!db) db = 'skt';
+          if (!table) {
+            return errorJson('缺少必填参数 tableName（如 tableName: "order_air"）');
+          }
+
+          try {
+            await runQuery(ctx, `USE \`${safeIdent(db)}\``, undefined, META_TIMEOUT_MS, '切换数据库');
+            const [columns] = await runQuery<any[]>(ctx, `SHOW FULL COLUMNS FROM \`${safeIdent(table)}\``, undefined, META_TIMEOUT_MS, '查询表结构');
+            let indexes: Array<{ name: string; unique: boolean; columns: string[] }> = [];
+            try {
+              const [idxRows] = await runQuery<any[]>(ctx, `SHOW INDEX FROM \`${safeIdent(table)}\``, undefined, META_TIMEOUT_MS, '查询索引');
+              const byName = new Map<string, { name: string; unique: boolean; columns: string[] }>();
+              for (const r of idxRows as Array<Record<string, any>>) {
+                const name = String(r.Key_name);
+                const entry = byName.get(name) || { name, unique: Number(r.Non_unique) === 0, columns: [] };
+                entry.columns[Number(r.Seq_in_index) - 1] = String(r.Column_name);
+                byName.set(name, entry);
+              }
+              indexes = Array.from(byName.values()).map((e) => ({ ...e, columns: e.columns.filter(Boolean) }));
+            } catch {
+              // 索引信息拿不到不影响表结构返回
+            }
+            const columnDetails = (columns as Array<Record<string, unknown>>).map((c) => {
+              const item: Record<string, unknown> = { field: c.Field, type: c.Type };
+              if (c.Key) item.key = c.Key;
+              if (c.Null === 'NO') item.notNull = true;
+              if (c.Comment) item.comment = c.Comment;
+              return item;
+            });
+            return JSON.stringify({
+              status: 'success',
+              action,
+              database: db,
+              tableName: table,
+              ...(defaulted ? { note: '未指定 database，默认使用 skt 库。' } : {}),
+              totalColumns: columnDetails.length,
+              indexes,
+              indexHint: '查询大表时请优先用 indexes 中的列做等值条件，否则容易全表扫描超时。',
+              columns: columnDetails,
+            });
+          } catch (err) {
+            if (err instanceof QueryTimeoutError) throw err;
+            return errorJson(`查看表结构失败: ${err instanceof Error ? err.message : String(err)}`, {
+              note: '请检查库名/表名是否正确，可先用 action:"list_tables" 或 "search_schema" 确认真实表名。',
             });
           }
         }
 
-        return JSON.stringify(
-          {
-            status: 'success',
-            action: 'list_tables',
-            database: db,
-            queriedBy: user,
-            matchedCount: tableList.length,
-            tables: tableList.slice(0, 200),
-            isTruncated: tableList.length > 200,
-            note: '可通过 action: “describe_table”, database: “' + db + '”, tableName: “<表名>” 查看具体表结构及字段注释。',
-          },
-          null,
-          2
-        );
-      }
-
-      case 'describe_table': {
-        let db = args.database?.trim();
-        let table = args.tableName?.trim() || args.keyword?.trim();
-
-        // If table contains db prefix (e.g. skt.train_order_passenger)
-        if (table && table.includes('.')) {
-          const parts = table.split('.');
-          if (parts.length === 2) {
-            db = db || parts[0].replace(/[`'\”]/g, '').trim();
-            table = parts[1].replace(/[`'\”]/g, '').trim();
+        case 'search_schema': {
+          const rawKeyword = (args.keyword || '').trim();
+          if (!rawKeyword) {
+            return errorJson('缺少必填参数 keyword（如 "refund" 或 "hotel"，支持 "A OR B" / "a|b" / "a,b" 多关键词）');
           }
-        }
-
-        // If tableName had multiple keywords like “a OR b”, take the first valid table candidate
-        if (table && /\s+(?:or|OR)\s+|\||,|\s+/i.test(table)) {
-          const candidates = normalizeKeywords(table);
-          if (candidates.length > 0) {
-            table = candidates[0];
+          const keywords = normalizeKeywords(rawKeyword);
+          if (keywords.length === 0) {
+            return errorJson('无法从 keyword 中解析出有效关键词。');
           }
-        }
-
-        if (!db) {
-          db = 'skt'; // Default to primary company database
-        }
-
-        if (!table) {
-          return JSON.stringify({
-            status: 'error',
-            message: '缺少必填参数 tableName（如 tableName: “train_order_ticket”）',
-          });
-        }
-
-        try {
-          await withTimeout(conn.query(`USE \`${db.replace(/`/g, '')}\``), 6000, '切换数据库超时 (6s)');
-          const [columns] = await withTimeout(
-            conn.query(`SHOW FULL COLUMNS FROM \`${table.replace(/`/g, '')}\``),
-            6000,
-            '查询表结构超时 (6s)'
-          );
-
-          const columnDetails = (columns as Array<Record<string, unknown>>).map((c) => ({
-            field: c.Field,
-            type: c.Type,
-            nullable: c.Null === 'YES',
-            key: c.Key || '',
-            default: c.Default,
-            extra: c.Extra || '',
-            comment: c.Comment || '',
-          }));
-
-          return JSON.stringify(
-            {
-              status: 'success',
-              action: 'describe_table',
-              database: db,
-              tableName: table,
-              queriedBy: user,
-              totalColumns: columnDetails.length,
-              columns: columnDetails,
-            },
-            null,
-            2
-          );
-        } catch (err: unknown) {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          return JSON.stringify({
-            status: 'error',
-            message: `查看表结构失败: ${errMsg}`,
-            note: '请检查表名是否存在，可先调用 action: “list_tables” 或 “search_schema” 确认精确表名。',
-          });
-        }
-      }
-
-      case 'search_schema': {
-        const rawKeyword = (args.keyword || '').trim();
-        if (!rawKeyword) {
-          return JSON.stringify({
-            status: 'error',
-            message: '缺少必填参数 keyword（如 keyword: “refund” 或 “hotel”，支持 “A OR B” / “a|b” / “a,b” 多关键词）',
-          });
-        }
-
-        // Normalize LLM-supplied keyword into individual tokens.
-        // Supports “A OR B”, “a|b|c”, “a,b,c”, and whitespace-separated lists.
-        const keywords = normalizeKeywords(rawKeyword);
-        if (keywords.length === 0) {
-          return JSON.stringify({
-            status: 'error',
-            message: '无法从 keyword 中解析出有效关键词。',
-          });
-        }
-
-        const [dbs] = await withTimeout(conn.query('SHOW DATABASES'), 6000, '查询数据库列表超时 (6s)');
-        const dbList = (dbs as Array<Record<string, unknown>>).map((r) =>
-          String(r.DATABASE || Object.values(r)[0])
-        );
-
-        const targetDbs = args.database?.trim() ? [args.database.trim()] : dbList;
-        const matchedTables: Array<{ database: string; table: string; matchedKeyword: string }> = [];
-
-        for (const db of targetDbs) {
-          try {
-            await withTimeout(conn.query(`USE \`${db.replace(/`/g, '')}\``), 4000, '选库超时');
-            const [tables] = await withTimeout(conn.query('SHOW TABLES'), 4000, '读表超时');
-            for (const t of tables as Array<Record<string, unknown>>) {
-              const tableName = String(Object.values(t)[0]);
-              const tableNameLower = tableName.toLowerCase();
-              // A table matches if ANY of the normalized keywords is a substring.
-              const hit = keywords.find((kw) => tableNameLower.includes(kw));
-              if (hit) {
-                matchedTables.push({ database: db, table: tableName, matchedKeyword: hit });
-              }
-            }
-          } catch {
-            // Ignore single db query error
-          }
-        }
-
-        return JSON.stringify(
-          {
-            status: 'success',
-            action: 'search_schema',
-            keyword: rawKeyword,
-            normalizedKeywords: keywords,
-            queriedBy: user,
-            totalMatches: matchedTables.length,
-            matches: matchedTables.slice(0, 100),
-            note: matchedTables.length === 0
-              ? (() => {
-                  const hasUserData = keywords.some(
-                    (k) => /^\d{7,}$/.test(k) || /^[\u4e00-\u9fa5]{2,4}$/.test(k)
-                  );
-                  if (hasUserData) {
-                    return '未匹配到表名。注意：输入的关键词看起来是具体业务数据（如手机号、订单号、姓名），search_schema 仅用于检索“数据库表名”（如 train_order、finance_bill）。请直接使用 action: “query”, database: “skt”, sql: “SELECT ... WHERE ...” 查询数据行！例如：SELECT * FROM skt.train_order_passenger WHERE phone = \'18053271039\'';
-                  }
-                  return '未匹配到任何表名。可尝试：1) 用更短/更通用的关键词（如 “order” 而非 “order_train_detail”）；2) 先 action: “list_databases” 查看可用库，再 action: “list_tables”, database: “<库名>” 浏览表清单。';
-                })()
-              : '可通过 action: “describe_table”, database: “<库名>”, tableName: “<表名>” 查看具体表结构及字段注释。',
-          },
-          null,
-          2
-        );
-      }
-
-      case 'query': {
-        let rawSql = (args.sql || '').trim();
-
-        // Parameter fallback: if LLM put the SQL or condition into keyword/tableName
-        if (!rawSql && args.keyword?.trim()) {
-          const kw = args.keyword.trim();
-          if (/^(select|show|desc|explain)\b/i.test(kw)) {
-            rawSql = kw;
-          } else if (args.tableName?.trim()) {
-            const condition = kw.replace(/^where\s+/i, '');
-            rawSql = 'SELECT * FROM `' + args.tableName.trim() + '` WHERE ' + condition;
-          } else if (/\b(from|where)\b/i.test(kw)) {
-            rawSql = 'SELECT * ' + (kw.toLowerCase().startsWith('from') ? kw : 'FROM ' + kw);
-          }
-        }
-
-        const sql = rawSql.replace(/^```(?:sql)?\s*/i, '').replace(/\s*```$/i, '').trim();
-        let db = args.database?.trim();
-
-        if (!sql) {
-          return JSON.stringify({
-            status: 'error',
-            message: '缺少必填参数 sql。必须传入完整的 SQL 查询语句（如 sql: “SELECT * FROM skt.train_order_passenger WHERE phone = \'18053271039\'”）。',
-          });
-        }
-
-        // 1. Validate SQL
-        const validation = validateReadOnlySql(sql);
-        if (!validation.valid) {
-          return JSON.stringify({
-            status: 'security_violation',
-            message: validation.reason,
-            sql,
-          });
-        }
-
-        if (!db) {
-          const dbTableMatch = sql.match(/`?([a-zA-Z0-9_]+)`?\s*\.\s*`?([a-zA-Z0-9_]+)`?/);
-          if (dbTableMatch) {
-            const inferred = dbTableMatch[1];
+          const [dbs] = await runQuery<any[]>(ctx, 'SHOW DATABASES', undefined, META_TIMEOUT_MS, '查询数据库列表');
+          const dbList = (dbs as Array<Record<string, unknown>>).map((r) => String(r.DATABASE || Object.values(r)[0]));
+          const targetDbs = args.database?.trim() ? [args.database.trim()] : dbList;
+          const matches: Array<{ database: string; table: string }> = [];
+          const failedDbs: string[] = [];
+          for (const db of targetDbs) {
             try {
-              const [dbs] = await withTimeout(conn.query('SHOW DATABASES'), 4000, 'SHOW DATABASES 超时');
-              const dbList = (dbs as Array<Record<string, unknown>>).map((r) =>
-                String(r.DATABASE || Object.values(r)[0])
-              );
-              if (dbList.some((d) => d.toLowerCase() === inferred.toLowerCase())) {
-                db = inferred;
+              await runQuery(ctx, `USE \`${safeIdent(db)}\``, undefined, 4000, '选库');
+              const [tables] = await runQuery<any[]>(ctx, 'SHOW TABLES', undefined, 4000, '读表');
+              for (const t of tables as Array<Record<string, unknown>>) {
+                const tableName = String(Object.values(t)[0]);
+                if (keywords.some((kw) => tableName.toLowerCase().includes(kw))) {
+                  matches.push({ database: db, table: tableName });
+                }
               }
-            } catch {
-              // Fall through to the missing-database guidance below
+            } catch (err) {
+              if (err instanceof QueryTimeoutError) throw err;
+              failedDbs.push(db);
             }
           }
-        }
-
-        if (!db) {
-          // 运行时表名缓存自学推断（优先于默认库）：模型写裸表名时自动路由到历史成功过的库
-          const cachedDb = inferDbFromCache(sql);
-          if (cachedDb) {
-            db = cachedDb;
-          }
-        }
-
-        if (!db) {
-          // Default to skt if omitted
-          db = 'skt';
-        }
-
-        // 3. Select DB (validated above)
-        await withTimeout(conn.query(`USE \`${db.replace(/`/g, '')}\``), 6000, '切换数据库超时 (6s)');
-
-        // 4. Enforce Limit
-        let finalSql = sql;
-        const limitParam = Math.min(Math.max(Number(args.limit || 50), 1), 200);
-
-        if (/^select\b/i.test(finalSql) && !/\blimit\s+\d+/i.test(finalSql)) {
-          finalSql = `${finalSql} LIMIT ${limitParam}`;
-        }
-
-        try {
-          const [rows] = await withTimeout(conn.query(finalSql), 10000, '数据库执行 SQL 超时 (10s)，请检查表名或添加索引条件');
-          const rowsArray = Array.isArray(rows) ? (rows as Array<Record<string, unknown>>) : [];
-          const sanitizedRows = rowsArray.map(sanitizeRow);
-
-          // 成功后学习表名→库映射，供后续裸表名查询自动路由
-          learnTableDbMappings(finalSql, db);
-
-          return JSON.stringify(
-            {
-              status: 'success',
-              action: 'query',
-              database: db,
-              queriedBy: user,
-              executedSql: finalSql,
-              rowCount: sanitizedRows.length,
-              rows: sanitizedRows,
-            },
-            null,
-            2
-          );
-        } catch (queryErr: unknown) {
-          const qMsg = queryErr instanceof Error ? queryErr.message : String(queryErr);
-          let hint = '';
-          if (/no\s+\w*\s*database\s*selected|1146/i.test(qMsg)) {
-            hint = '（提示：MyCat 要求先指定库，请确认 database 参数已正确传入，或 SQL 中使用 `库名.表名`）';
-          } else if (/unknown\s+(table|column)|1146|1054/i.test(qMsg)) {
-            hint = '（提示：表名/字段名可能不正确，建议先 action: “describe_table” 确认表结构，或 action: “search_schema” 重新定位真实表名）';
-          }
+          const looksLikeData = keywords.some((k) => /^\d{7,}$/.test(k) || /^[一-龥]{2,}$/.test(k));
           return JSON.stringify({
-            status: 'error',
-            message: `数据库查询异常: ${qMsg}${hint}`,
-            database: db,
-            executedSql: finalSql,
+            status: 'success',
+            action,
+            keyword: rawKeyword,
+            totalMatches: matches.length,
+            matches: matches.slice(0, 150),
+            ...(failedDbs.length ? { skippedDatabases: failedDbs } : {}),
+            note:
+              matches.length === 0
+                ? looksLikeData
+                  ? 'search_schema 只按"表名"匹配英文词根。看起来你输入的是业务数据（单号/手机号/中文），请改用 lookup_order 定位单号，或直接 action:"query" 写 SQL 查数据行。'
+                  : '没有表名包含这些关键词。请换更短的英文词根（如 order / refund / hotel），或先 list_databases 再 list_tables 浏览。'
+                : '找到候选表后请先 describe_table 确认字段与索引，再写查询。',
           });
         }
-      }
 
-      default:
-        return JSON.stringify({
-          status: 'error',
-          message: `未知的 action: ${args.action}。可用选项: list_databases, list_tables, describe_table, search_schema, query`,
-        });
+        case 'query': {
+          let rawSql = (args.sql || '').trim();
+          // 参数兜底：模型把 SQL 或条件写进了 keyword/tableName
+          if (!rawSql && args.keyword?.trim()) {
+            const kw = args.keyword.trim();
+            if (/^(select|show|desc|explain)\b/i.test(kw)) {
+              rawSql = kw;
+            } else if (args.tableName?.trim()) {
+              rawSql = 'SELECT * FROM `' + safeIdent(args.tableName.trim()) + '` WHERE ' + kw.replace(/^where\s+/i, '');
+            }
+          }
+          if (!rawSql) {
+            return errorJson('缺少必填参数 sql（如 sql: "SELECT ... FROM skt.order_air WHERE air_id = \'1540797466482442240\'"）');
+          }
+
+          const validation = validateReadOnlySql(rawSql);
+          if (!validation.valid) {
+            return JSON.stringify({ status: 'security_violation', message: validation.reason, sql: rawSql });
+          }
+
+          const notes: string[] = [];
+          const quoted = quoteLongIdLiterals(normalizeSqlText(rawSql));
+          let sql = quoted.sql;
+          if (quoted.changed) {
+            notes.push('已把长数字 ID 字面量自动加引号按字符串比较（字符串列与数字比较会全表扫描且有精度误差）。');
+          }
+
+          let db = args.database?.trim();
+          let known: string[] = [];
+          try {
+            known = await getKnownDatabases(ctx);
+          } catch (err) {
+            if (err instanceof QueryTimeoutError) throw err;
+          }
+          if (!db) {
+            db = inferDbFromQualifiedNames(sql, known) || inferDbFromCache(sql) || undefined;
+          }
+          if (!db) {
+            db = 'skt';
+            notes.push('未指定 database，默认使用 skt 库。');
+          }
+
+          const limit = Math.min(Math.max(Number(args.limit) || DEFAULT_ROW_LIMIT, 1), MAX_ROW_LIMIT);
+          const limited = applyRowLimit(sql, limit);
+          sql = limited.sql;
+
+          try {
+            await runQuery(ctx, `USE \`${safeIdent(db)}\``, undefined, META_TIMEOUT_MS, '切换数据库');
+            const [rows] = await runQuery<any>(ctx, sql, undefined, QUERY_TIMEOUT_MS, '数据库执行 SQL ');
+            const rowsArray = Array.isArray(rows) ? (rows as Array<Record<string, unknown>>) : [];
+            learnTableDbMappings(sql, db, known);
+            return formatRowsResult({
+              database: db,
+              executedSql: sql,
+              rows: rowsArray,
+              limit,
+              probeLimit: limited.probeLimit,
+              userLimit: limited.userLimit,
+              notes,
+            });
+          } catch (queryErr) {
+            if (queryErr instanceof QueryTimeoutError) {
+              return errorJson(`数据库查询异常: ${queryErr.message}`, { database: db, executedSql: sql, guidance: SLOW_QUERY_GUIDANCE });
+            }
+            const qMsg = queryErr instanceof Error ? queryErr.message : String(queryErr);
+            let hint = '';
+            if (/no\s+\w*\s*database\s*selected/i.test(qMsg)) {
+              hint = '（提示：MyCat 要求先指定库，请传 database 参数或在 SQL 中使用 `库名.表名`）';
+            } else if (/unknown\s+column|1054/i.test(qMsg)) {
+              hint = '（提示：字段名不存在，请先 action:"describe_table" 确认真实字段名）';
+            } else if (/doesn't exist|1146|unknown\s+table/i.test(qMsg)) {
+              hint = '（提示：表不存在，请用 action:"search_schema" 或 "list_tables" 确认真实表名）';
+            }
+            return errorJson(`数据库查询异常: ${qMsg}${hint}`, { database: db, executedSql: sql });
+          }
         }
-    })());
 
-    // 查询成功则重置连续失败计数（通道恢复正常）
-    try {
-      const obj = JSON.parse(result);
-      if (obj && obj.status === 'success') {
-        consecutiveDbFailures = 0;
-        (globalThis as any).__xkangDbFailures = 0;
+        default:
+          return errorJson(`未知的 action: ${args.action}。可用选项: list_databases, list_tables, describe_table, search_schema, query`);
       }
-    } catch {}
-
-    return result;
-  } catch (err: unknown) {
+    });
+  } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
-    // 超时/连接被重置时，连接上可能仍挂着未完成的慢查询，必须销毁而非归还池子
-    if (/超时|ECONNRESET|EPIPE|PROTOCOL_CONNECTION_LOST/i.test(errorMsg)) {
-      hadTimeout = true;
+    if (err instanceof DbConnectError) {
+      return errorJson(`数据库查询异常: ${errorMsg}`, { guidance: DB_CONNECT_GUIDANCE });
     }
-    consecutiveDbFailures++;
-    (globalThis as any).__xkangDbFailures = consecutiveDbFailures;
-    const message = /超时/i.test(errorMsg)
-      ? `数据库查询异常: ${errorMsg}\n\n[慢查询防护引导] ${SLOW_QUERY_GUIDANCE}`
-      : `数据库查询异常: ${errorMsg}`;
-    const payload: Record<string, unknown> = { status: 'error', message };
-    // 数据库通道连续异常时，主动引导切换排查通道，避免模型在同一通道反复撞墙耗尽轮次
-    if (consecutiveDbFailures >= 3) {
-      payload.nextStepHint =
-        '数据库通道已连续多次异常（可能为慢查询拖垮连接或网络抖动）。请立即暂停数据库查询，改用 search_logs（keyword=单号 或 create_time 时间窗口）检索微服务运行日志、用 search_code 检索报错文案定位代码；获得线索后再恢复带索引条件的精确查库。';
+    if (err instanceof QueryTimeoutError) {
+      return errorJson(`数据库查询异常: ${errorMsg}`, { guidance: SLOW_QUERY_GUIDANCE });
     }
-    return JSON.stringify(payload);
-  } finally {
-    if (conn) {
-      if (hadTimeout) {
-        try { (conn as any).destroy(); } catch { try { conn.release(); } catch {} }
-      } else {
-        try { conn.release(); } catch {}
-      }
-    }
+    return errorJson(`数据库查询异常: ${errorMsg}`, { queriedBy: user });
   }
 }

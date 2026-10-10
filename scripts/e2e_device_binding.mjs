@@ -21,6 +21,8 @@ const tokenManager = new TokenManager(testTokensPath);
 const testRecord = tokenManager.createToken('测试客服-小张');
 const testKey = testRecord.token;
 
+// 测试实例不能执行定时代码同步（会对 D:\\skt_project 执行 git pull / reset）
+process.env.CODE_SYNC_ENABLED = 'false';
 const { server } = startServer();
 const BASE_URL = `http://localhost:${TEST_PORT}`;
 

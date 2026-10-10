@@ -31,35 +31,18 @@ export const KeyBindingPrompt: React.FC<KeyBindingPromptProps> = ({
 
     try {
       // Send lightweight probe to verify key & bind device
-      const resp = await fetch(`${cleanServer}/v1/chat/completions`, {
-        method: 'POST',
+      const resp = await fetch(`${cleanServer}/agent/sessions`, {
+        method: 'GET',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${rawKey}`,
           'x-device-id': deviceId,
         },
-        body: JSON.stringify({
-          model: 'xkang-managed',
-          messages: [{ role: 'user', content: 'probe' }],
-          stream: false,
-        }),
       });
 
       if (resp.status === 200) {
-        // Fetch server-side public config (codeRepoPath) for local persistence
-        let serverCodeRepoPath: string | undefined;
-        try {
-          const cfgResp = await fetch(`${cleanServer}/config/client`);
-          if (cfgResp.ok) {
-            const cfg = (await cfgResp.json()) as { codeRepoPath?: string };
-            serverCodeRepoPath = cfg.codeRepoPath || undefined;
-          }
-        } catch {
-          // non-fatal: client falls back to local default
-        }
-
         setIsVerifying(false);
-        onActivated(rawKey, undefined, serverCodeRepoPath);
+        onActivated(rawKey);
         return;
       }
 
@@ -82,8 +65,7 @@ export const KeyBindingPrompt: React.FC<KeyBindingPromptProps> = ({
       }
     } catch (err: unknown) {
       setIsVerifying(false);
-      const msg = err instanceof Error ? err.message : String(err);
-      setErrorMessage(`❌ 无法连接到公司服务端 [${serverUrl}]，请检查内网连接: ${msg}`);
+      setErrorMessage('❌ 无法连接业务服务，请检查网络或联系管理员。');
     }
   };
 
@@ -94,9 +76,7 @@ export const KeyBindingPrompt: React.FC<KeyBindingPromptProps> = ({
         <Text bold color="cyanBright">
           🤖 小康 TUI 客服智能排障助手 - 首次启动激活向导
         </Text>
-        <Text color="gray">
-          服务端地址: {serverUrl} | 本机设备指纹: {getDeviceId().slice(0, 32)}...
-        </Text>
+        <Text color="gray">请输入管理员提供的员工授权。</Text>
       </Box>
 
       {/* Guide Info */}

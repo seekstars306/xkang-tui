@@ -25,3 +25,9 @@ out/
 # misc
 *.log
 .DS_Store
+
+# eval reports contain business data
+tests/eval/reports/
+
+# web UI screenshots (tests/ui/web_ui_snapshots.mjs)
+tests/ui/shots/

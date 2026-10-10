@@ -11,7 +11,7 @@ export interface UserLocalConfig {
 }
 
 const DEFAULT_SERVER_URL = 'http://10.197.15.89:8600';
-const DEFAULT_CODE_REPO_PATH = 'D:\\skt_project';
+const DEFAULT_CODE_REPO_PATH = '';
 
 export function getUserConfigPath(): string {
   const homeDir = os.homedir();
@@ -36,7 +36,7 @@ export function loadUserLocalConfig(): UserLocalConfig {
       token: parsed.token || undefined,
       userName: parsed.userName || undefined,
       lastActivatedAt: parsed.lastActivatedAt || undefined,
-      codeRepoPath: parsed.codeRepoPath || DEFAULT_CODE_REPO_PATH,
+      codeRepoPath: undefined,
     };
   } catch {
     return {
@@ -55,6 +55,7 @@ export function saveUserLocalConfig(config: Partial<UserLocalConfig>): void {
 
   const current = loadUserLocalConfig();
   const merged = { ...current, ...config };
+  delete merged.codeRepoPath;
   fs.writeFileSync(filePath, JSON.stringify(merged, null, 2), 'utf-8');
 }
 

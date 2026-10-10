@@ -4,11 +4,12 @@ import path from 'node:path';
 import OpenAI from 'openai';
 import { ServerConfig } from './types.js';
 import { AuditLogger } from './auth.js';
-import { ActiveModelManager, ManagedModelId, classifyRequest } from './model_state.js';
+import { ActiveModelManager, ManagedModelId, classifyRequest, isHarnessReminderText, SERVER_COMPANY_MCP_TOOLS } from './model_state.js';
+import { getServerBasePrompt } from './system_prompt.js';
 
 export const PUBLIC_MODEL_ALIAS = 'xkang-managed';
 
-function getProviderClient(model: ManagedModelId, config: ServerConfig): { client: OpenAI; targetModel: string } {
+export function getProviderClient(model: ManagedModelId, config: ServerConfig): { client: OpenAI; targetModel: string; reasoningEffort?: 'high' } {
   // 180 seconds generous timeout for large multi-modal reasoning & deep search calls
   const API_TIMEOUT_MS = 180000;
   // Retry transient upstream failures (502/503/429/conn reset) up to 4 times.
@@ -56,6 +57,7 @@ function getProviderClient(model: ManagedModelId, config: ServerConfig): { clien
         maxRetries: MAX_RETRIES,
       }),
       targetModel: config.geminiModel || 'gemini-3.8-flash-high',
+      reasoningEffort: config.geminiReasoningEffort === 'default' ? undefined : 'high',
     };
   }
 
@@ -190,6 +192,9 @@ export function sanitizeOpenAiMessages(messages: any[]): any[] {
               name: fnName,
               arguments: args || '{}',
             },
+            // 透传供应商私有字段（如 Gemini 的 extra_content.google.thought_signature），
+            // 丢失后多轮工具调用之间的推理链会断开，部分模型还会直接拒绝请求
+            ...(tc.extra_content ? { extra_content: tc.extra_content } : {}),
           };
         });
       }
@@ -286,6 +291,20 @@ export function sanitizeOpenAiMessages(messages: any[]): any[] {
   return [...systemMessages, ...sanitized];
 }
 
+/** 把（已归一化的）消息序列中的系统提示词替换为 L1 提示词，原地修改 */
+export function applyL1SystemPrompt(openAiMessages: any[]): void {
+  const l1Prompt = getServerBasePrompt('l1');
+  const firstSystemIdx = openAiMessages.findIndex((m) => m.role === 'system');
+  if (firstSystemIdx >= 0) {
+    openAiMessages[firstSystemIdx] = { role: 'system', content: l1Prompt };
+    for (let i = openAiMessages.length - 1; i > firstSystemIdx; i--) {
+      if (openAiMessages[i].role === 'system') openAiMessages.splice(i, 1);
+    }
+  } else {
+    openAiMessages.unshift({ role: 'system', content: l1Prompt });
+  }
+}
+
 function saveBase64ImagesToDiskAndExtractPaths(messages: any[], baseDir: string = './data/uploads'): string[] {
   const savedPaths: string[] = [];
   const now = new Date();
@@ -332,7 +351,10 @@ function extractUserPromptSummary(messages: any[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.role === 'user') {
-      if (typeof m.content === 'string') return m.content;
+      if (typeof m.content === 'string') {
+        if (isHarnessReminderText(m.content)) continue;
+        return m.content;
+      }
       if (Array.isArray(m.content)) {
         const textParts: string[] = [];
         const imagePaths: string[] = [];
@@ -357,7 +379,8 @@ function extractUserPromptSummary(messages: any[]): string {
 export function setupLlmProxy(
   config: ServerConfig,
   audit: AuditLogger,
-  modelManager: ActiveModelManager
+  modelManager: ActiveModelManager,
+  options: { localOnly?: boolean } = {}
 ) {
   return async (req: Request, res: Response): Promise<void> => {
     const user = req.user?.name || 'unknown';
@@ -378,6 +401,11 @@ export function setupLlmProxy(
       enableL1: config.enableL1,
       enableL2: config.enableL2,
     });
+    if (options.localOnly) {
+      classification.tier = 'l1';
+      classification.matchedRule = 'LOCAL_ASSISTANT_ONLY';
+      classification.reason = '员工模型接口仅处理独立本机会话';
+    }
     const actualModel = classification.targetModel;
 
     console.log(
@@ -387,6 +415,8 @@ export function setupLlmProxy(
     let accumulatedPromptTokens = 0;
     let accumulatedCompletionTokens = 0;
     let accumulatedReasoningTokens = 0;
+    let reportedTotalTokens: number | undefined;
+    let cachedInputTokens: number | undefined;
     let accumulatedResponseText = '';
     const toolCallNames = new Set<string>();
 
@@ -394,29 +424,27 @@ export function setupLlmProxy(
       // Transform and sanitize messages for upstream providers (OpenAI, Gemini, DeepSeek, Grok)
       const openAiMessages = sanitizeOpenAiMessages(messages || []);
 
-      // Server-side Company MCP Tools (strictly excluded for L1 models)
-      const SERVER_COMPANY_MCP_TOOLS = new Set([
-        'search_code',
-        'company_db_query',
-        'query_company_database',
-        'codegraph_explore',
-        'git_inspect',
-        'knowledge_search',
-        'search_logs',
-        'list_log_apps',
-      ]);
-
       let openAiTools: any[] | undefined = tools && tools.length > 0 ? tools : undefined;
+      if (options.localOnly && openAiTools) {
+        const localNames = new Set(['todo_write', 'ask_user_question', 'web_fetch', 'write_file', 'edit_file', 'run_powershell', 'read_tool_result']);
+        openAiTools = openAiTools.filter(tool => localNames.has(tool.function?.name));
+        if (!openAiTools.length) openAiTools = undefined;
+      }
 
       // When request is routed to L1 (Grok), completely strip server-side company code/DB tools from tool definitions
-      if (classification.tier === 'l1' && openAiTools) {
-        openAiTools = openAiTools.filter((t: any) => {
-          const fnName = t.function?.name || t.name;
-          return !SERVER_COMPANY_MCP_TOOLS.has(fnName);
-        });
-        if (openAiTools.length === 0) {
-          openAiTools = undefined;
+      if (classification.tier === 'l1') {
+        if (openAiTools) {
+          openAiTools = openAiTools.filter((t: any) => {
+            const fnName = t.function?.name || t.name;
+            return !SERVER_COMPANY_MCP_TOOLS.has(fnName);
+          });
+          if (openAiTools.length === 0) {
+            openAiTools = undefined;
+          }
         }
+        // 客户端在托管模式下总是发送 L2 提示词；L1 通道必须换成带升级协议的 L1 提示词，
+        // 否则 L1 模型会被要求使用它根本拿不到的查库/查码工具
+        applyL1SystemPrompt(openAiMessages);
       }
 
       // Set headers for SSE stream with no-buffering guarantees
@@ -441,7 +469,7 @@ export function setupLlmProxy(
         if (config.mockLlm) {
           upstreamStream = mockUpstreamStream(actualModel);
         } else {
-          const { client, targetModel } = getProviderClient(actualModel, config);
+          const { client, targetModel, reasoningEffort } = getProviderClient(actualModel, config);
           // The OpenAI SDK does NOT retry streaming create() calls that fail at
           // connection time (e.g. upstream 502). Wrap in our own retry loop so a
           // transient upstream hiccup doesn't immediately surface as an error
@@ -454,6 +482,7 @@ export function setupLlmProxy(
             try {
               upstreamStream = (await client.chat.completions.create({
                 model: targetModel,
+                ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
                 messages: openAiMessages,
                 tools: openAiTools,
                 stream: true,
@@ -481,6 +510,8 @@ export function setupLlmProxy(
             accumulatedCompletionTokens = chunk.usage.completion_tokens || 0;
             accumulatedReasoningTokens =
               chunk.usage.completion_tokens_details?.reasoning_tokens || 0;
+            reportedTotalTokens = chunk.usage.total_tokens;
+            cachedInputTokens = chunk.usage.prompt_tokens_details?.cached_tokens;
           }
 
           const delta = chunk.choices?.[0]?.delta;
@@ -521,6 +552,9 @@ export function setupLlmProxy(
         model: `${actualModel} [${classification.tier.toUpperCase()}]`,
         details: {
           tier: classification.tier,
+          reasoningEffort: actualModel === 'gemini' && config.geminiReasoningEffort !== 'default' ? 'high' : 'default',
+          reasoningTokens: accumulatedReasoningTokens,
+          cachedInputTokens,
           userInput: userPrompt.length > 500 ? userPrompt.slice(0, 500) + '...' : userPrompt,
           assistantOutput: outputText.length > 500 ? outputText.slice(0, 500) + '...' : outputText,
           toolCalls: toolsInvoked.length > 0 ? toolsInvoked : undefined,
@@ -529,7 +563,7 @@ export function setupLlmProxy(
           promptTokens: accumulatedPromptTokens,
           completionTokens: accumulatedCompletionTokens,
           reasoningTokens: accumulatedReasoningTokens,
-          totalTokens: accumulatedPromptTokens + accumulatedCompletionTokens,
+          totalTokens: reportedTotalTokens ?? accumulatedPromptTokens + accumulatedCompletionTokens,
         },
         durationMs: Date.now() - startTime,
         success: true,
@@ -547,9 +581,9 @@ export function setupLlmProxy(
       });
 
       if (!res.headersSent) {
-        res.status(500).json({ error: `[xkang 服务端 LLM 代理错误] ${errorMsg}` });
+        res.status(500).json({ error: options.localOnly ? '模型服务暂时未完成请求，请稍后重试。' : `[xkang 服务端 LLM 代理错误] ${errorMsg}` });
       } else {
-        res.write(`data: ${JSON.stringify({ error: { message: errorMsg } })}\n\n`);
+        res.write(`data: ${JSON.stringify({ error: { message: options.localOnly ? '模型服务暂时未完成请求，请稍后重试。' : errorMsg } })}\n\n`);
         res.write('data: [DONE]\n\n');
         res.end();
       }

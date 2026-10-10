@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import { AuthUser, AuditRecord, ServerConfig } from './types.js';
 import { TokenManager } from './token_manager.js';
 
@@ -148,7 +149,7 @@ export function createAuthMiddleware(
       return;
     }
 
-    req.user = { token, name: userName! };
+    req.user = { token, name: userName!, subjectId: tokenManager ? tokenManager.getSubjectId(token) : createHash('sha256').update(token).digest('hex') };
     next();
   };
 }

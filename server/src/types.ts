@@ -1,6 +1,7 @@
 export interface AuthUser {
   token: string;
   name: string;
+  subjectId?: string;
 }
 
 export interface ServerConfig {
@@ -13,6 +14,8 @@ export interface ServerConfig {
   geminiApiKey?: string;
   geminiBaseUrl: string;
   geminiModel: string;
+  geminiReasoningEffort?: 'high' | 'default';
+  answerReviewTimeoutMs?: number;
   grokApiKey?: string;
   grokBaseUrl: string;
   grokModel: string;

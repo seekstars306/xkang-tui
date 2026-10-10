@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "rootDir": ".",
+    "declaration": false
+  },
+  "include": ["src/**/*", "tests/**/*", "scripts/eval/**/*"],
+  "exclude": ["node_modules", "dist", "server/node_modules", "server/dist", "tests/eval/reports"]
+}

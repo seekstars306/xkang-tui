@@ -26,6 +26,10 @@ dotenv.config({ path: serverEnvPath });
 
 export function loadServerConfig(): ServerConfig {
   const port = parseInt(process.env.PORT || '8090', 10);
+  const geminiReasoningEffort = process.env.GEMINI_REASONING_EFFORT || 'high';
+  if (geminiReasoningEffort !== 'high' && geminiReasoningEffort !== 'default') throw new Error('GEMINI_REASONING_EFFORT must be high or default');
+  const answerReviewTimeoutMs = Number(process.env.ANSWER_REVIEW_TIMEOUT_MS || '180000');
+  if (!Number.isInteger(answerReviewTimeoutMs) || answerReviewTimeoutMs < 60000 || answerReviewTimeoutMs > 300000) throw new Error('ANSWER_REVIEW_TIMEOUT_MS must be between 60000 and 300000');
   
   // Format: XKANG_TOKENS="tok_alice_123:Alice,tok_bob_456:Bob"
   const tokensRaw = process.env.XKANG_TOKENS || 'tok_dev_001:测试员工';
@@ -71,6 +75,8 @@ export function loadServerConfig(): ServerConfig {
     geminiApiKey: process.env.GEMINI_API_KEY,
     geminiBaseUrl: process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/',
     geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash-high',
+    geminiReasoningEffort,
+    answerReviewTimeoutMs,
     grokApiKey: process.env.GROK_API_KEY,
     grokBaseUrl: process.env.GROK_BASE_URL || 'https://api.x.ai/v1',
     grokModel: process.env.GROK_MODEL || 'grok-4.6-medium',

@@ -3,273 +3,178 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>小康智能客服排障助手 · 客服工作台</title>
-  <link rel="icon" href="data:," />
+  <title>小康客服助手</title>
+  <link rel="icon" href="/favicon.png" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <div id="app">
-
-    <!-- ======================= 左侧客服导航栏 ======================= -->
-    <aside id="sidebar">
-      <div class="sb-head">
-        <div class="logo-title">
-          <span class="logo-icon">🎧</span>
-          <span class="logo-name">小康客服助手</span>
-          <span class="logo-badge" id="clientVersionBadge" onclick="manualCheckUpdate()" title="点击手动检查更新" style="cursor:pointer">v1.1.57</span>
-        </div>
-        <div class="sb-head-actions">
-          <button class="icon-btn" id="newChatTopBtn" title="新建排障会话">
-            <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-          </button>
-        </div>
+    <aside id="sidebar" aria-label="会话">
+      <div class="brand">
+        <img src="/logo.png" alt="" class="brand-mark" width="28" height="28" />
+        <span class="brand-name">小康客服助手</span>
       </div>
 
-      <nav class="quick-nav">
-        <button class="nav-item primary" id="newChatBtn">
-          <svg class="icon" viewBox="0 0 24 24"><path d="M12 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 013 3L12 15l-4 1 1-4z"/></svg>
-          <span>新建排障会话</span>
-        </button>
-      </nav>
+      <button type="button" class="new-session" id="newSessionBtn">
+        <svg class="icon" aria-hidden="true"><use href="#i-plus" /></svg>
+        新建会话
+      </button>
 
-      <div class="sb-scroll">
-        <!-- 动态历史会话列表 -->
-        <div class="section-label-row">
-          <span class="section-label">排障会话历史</span>
-          <span class="session-count" id="sessionCount">0</span>
-        </div>
-        <div class="session-list" id="sessionList">
-          <!-- 动态插入会话项 -->
-        </div>
-      </div>
+      <nav class="session-nav" id="sessionList" aria-label="历史会话"></nav>
 
-      <div class="sb-foot">
-        <div class="avatar" id="userAvatar">…</div>
-        <div class="user-meta">
-          <span class="user-name" id="userName">加载中...</span>
-          <span class="user-role">在线排障中 · 专属授权</span>
+      <footer class="sidebar-foot">
+        <div class="me">
+          <span class="me-avatar" id="userAvatar" aria-hidden="true">客</span>
+          <span class="me-name" id="userName">客服专员</span>
         </div>
-        <button class="icon-btn help" title="客服排障使用帮助" onclick="showHelpModal()">?</button>
-      </div>
+        <div class="foot-links">
+          <button type="button" class="text-btn" id="helpBtn">使用说明</button>
+          <button type="button" class="text-btn" id="versionBtn" title="检查更新">检查更新</button>
+        </div>
+      </footer>
     </aside>
+    <div class="scrim" id="scrim"></div>
 
-      <!-- ======================= 主工作区 ======================= -->
-      <main id="main">
-        <!-- 发现新版本更新提示横幅 -->
-        <div id="updateBanner" class="update-banner" hidden>
-          <div class="update-banner-content">
-            <span class="update-icon">🚀</span>
-            <span class="update-text" id="updateBannerText">发现新版本 v1.1.52，包含最新排障规则与性能优化</span>
-            <button class="btn btn-update" id="doUpdateBtn" onclick="triggerClientUpdate()">立即更新</button>
-            <button class="icon-btn-close" onclick="dismissUpdateBanner()" title="暂不更新">✕</button>
-          </div>
-        </div>
-
-        <div class="main-topbar">
-        <button class="icon-btn" title="新建会话" onclick="startNewSession()">
-          <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-        </button>
-        <button class="icon-btn" title="收起/展开侧边栏" onclick="toggleSidebar()">
-          <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
+    <main id="main">
+      <div class="update-banner" id="updateBanner" role="status" hidden>
+        <span class="update-text" id="updateBannerText"></span>
+        <button type="button" class="btn btn-small btn-light" id="doUpdateBtn">立即更新</button>
+        <button type="button" class="icon-btn" id="dismissUpdateBtn" aria-label="暂不更新" title="暂不更新">
+          <svg class="icon" aria-hidden="true"><use href="#i-x" /></svg>
         </button>
       </div>
 
-      <!-- 欢迎页: 客服助手专属设计 -->
-      <div id="welcome">
-        <div class="welcome-card">
-          <div class="welcome-header">
-            <div class="assistant-badge">
-              <span class="bot-emoji">🤖</span>
-              <span class="pulse-dot"></span>
+      <header class="topbar">
+        <button type="button" class="icon-btn menu-btn" id="menuBtn" aria-label="会话列表" aria-expanded="false">
+          <svg class="icon" aria-hidden="true"><use href="#i-menu" /></svg>
+        </button>
+        <h1 class="topbar-title" id="sessionTitle">新会话</h1>
+        <div class="conn" id="conn" data-state="checking" role="status">
+          <span class="conn-dot" aria-hidden="true"></span>
+          <span id="connText">正在连接…</span>
+        </div>
+      </header>
+
+      <div class="scroller" id="scroller">
+        <div class="column">
+          <section class="intake" id="welcome" aria-labelledby="intakeTitle">
+            <h2 class="intake-title" id="intakeTitle">把单号、报错或截图发给我</h2>
+            <p class="intake-lead">我会核对相关业务记录，给出经过复核的业务结论和必要信息，再附上一段可以回复客户的话术。</p>
+            <div class="examples">
+              <span class="examples-label">可以这样问</span>
+              <button type="button" class="example" data-prompt="订单 | 出单异常，帮我看看原因">订单（单号）出单异常，帮我看看原因</button>
+              <button type="button" class="example" data-action="attach">用户发来报错截图：先粘贴截图，再说一句现象</button>
+              <button type="button" class="example" data-prompt="打车订单 | 付了两次款，银行有两笔扣款，系统只记了一笔，查一下原因">打车订单付了两次款，系统只记了一笔</button>
+              <button type="button" class="example" data-prompt="|领导订票，我们这边都有谁能收到短信？从关联发送配置里查">某公司领导订票，我们这边谁能收到短信</button>
             </div>
-            <h1 class="welcome-title">您好，我是小康智能客服排障助手</h1>
-            <p class="welcome-sub">
-              专为客服一线打造的全链路问题定位系统 · 快速查账对账、分析错误截图、生成答复话术
+            <p class="legend">
+              回答会注明核验状态：
+              <span class="seal-mini" data-v="reviewed">已复核</span>完成证据复核，
+              <span class="seal-mini" data-v="needs_human">需人工核实</span>仍有待核实事项，
+              <span class="seal-mini" data-v="unreviewed">未复核</span>尚未完成核验。
             </p>
-          </div>
-
-          <div class="cs-quick-actions">
-            <div class="action-card" onclick="fillPrompt('请帮我全链路核查以下订单的详细状态与流转异常：\n订单号：')">
-              <div class="action-icon blue">🔍</div>
-              <div class="action-text">
-                <span class="action-title">订单全链路溯源</span>
-                <span class="action-desc">输入订单号，一键排查出票、退改、支付流转异常</span>
-              </div>
-            </div>
-
-            <div class="action-card" onclick="fillPrompt('请核对以下订单的 balance 账户余额与退款流水明细：\n交易单号/ID：')">
-              <div class="action-icon green">📊</div>
-              <div class="action-text">
-                <span class="action-title">金额 balance 与对账核实</span>
-                <span class="action-desc">自动比对账单数据、手续费与退款流水差额</span>
-              </div>
-            </div>
-
-            <div class="action-card" onclick="triggerScreenshotUpload()">
-              <div class="action-icon purple">🖼️</div>
-              <div class="action-text">
-                <span class="action-title">用户报错截图识别</span>
-                <span class="action-desc">按 Ctrl+V 或点击直接上传截图，AI 自动读图定位问题</span>
-              </div>
-            </div>
-
-            <div class="action-card" onclick="fillPrompt('根据前面的排障结论，请为我生成一份专业、温和的标准客服答复话术。')">
-              <div class="action-icon orange">💬</div>
-              <div class="action-text">
-                <span class="action-title">标准答复话术生成</span>
-                <span class="action-desc">自动输出结构化排障报告 + 客户沟通现成话术</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="cs-tips-bar">
-            <span class="tips-badge">💡 贴士</span>
-            <span>遇到用户反馈异常时，直接粘贴订单号、接口报错或截图即可自动秒级排障</span>
-          </div>
+          </section>
+          <div class="log" id="log" hidden></div>
         </div>
       </div>
 
-      <!-- 会话消息流 -->
-      <div id="chat" hidden>
-        <div class="chat-header">
-          <div class="chat-title-group">
-            <span class="chat-status-dot" id="chatStatusDot"></span>
-            <h2 class="chat-session-title" id="chatSessionTitle">排障会话</h2>
-            <span class="chat-live-badge" id="chatLiveBadge" hidden>排障分析中...</span>
-          </div>
-          <button class="btn ghost-btn" onclick="startNewSession()" title="开启新会话">
-            <svg class="icon" viewBox="0 0 24 24"><path d="M12 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 013 3L12 15l-4 1 1-4z"/></svg>
-            新建会话
-          </button>
-        </div>
-        <div id="msgList"></div>
-      </div>
-
-      <!-- 底部输入区 -->
-      <div id="composerWrap">
-        <div class="chips">
-          <span class="chip">
-            <svg class="icon" viewBox="0 0 24 24"><path d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
-            业务排障服务中心
-          </span>
-          <span class="chip">
-            <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-            客服专属授权
-          </span>
-          <span class="chip chip-fixed">
-            <svg class="icon" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-            全链路智能排障引擎
-          </span>
-        </div>
-
-        <div class="composer" id="composerCard">
-          <!-- 附件预览容器 -->
-          <div class="attachments-row" id="attachmentsRow" hidden></div>
-
-          <textarea id="input" rows="1" placeholder="输入订单号、流水单号、业务报错，或直接按 Ctrl+V 粘贴用户报错截图..."></textarea>
-          
-          <div class="composer-row">
-            <!-- 隐藏的文件选择器 -->
-            <input type="file" id="fileInput" multiple accept="image/*,.log,.txt,.json,.md,.sql" hidden />
-            
-            <button class="icon-btn round" id="uploadBtn" title="上传报错截图或日志文件 (+)">
-              <svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-            </button>
-            
-            <span class="guard-note" title="涉及系统修改时会自动弹出确认卡片">
-              <svg class="icon warn" viewBox="0 0 24 24"><path d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
-              关键操作需审核
-            </span>
-            
-            <div class="spacer"></div>
-            
-            <!-- 反馈按钮 (放置在智能客服底座左侧) -->
-            <button class="feedback-inline-btn" id="feedbackInlineBtn" onclick="openFeedbackModal()" title="排障结论有误或不符？点击反馈给研发团队">
-              <span class="feedback-icon">🐞</span>
-              <span>反馈问题</span>
-            </button>
-
-            <!-- 只读调度底座标识与执行状态 -->
-            <div class="model-badge-fixed" id="modelBadgeStatus" title="由公司统一排障中台实时驱动">
-              <span class="status-indicator-yellow" id="modelStatusIndicator"></span>
-              <span id="modelStatusText">正在连接排障服务…</span>
+      <div class="composer-dock">
+        <div class="column">
+          <form class="composer" id="composer" autocomplete="off">
+            <div class="attachments" id="attachments" hidden></div>
+            <label class="sr-only" for="input">输入问题</label>
+            <textarea id="input" rows="1" placeholder="输入单号、报错文案或问题，Ctrl+V 可粘贴截图"></textarea>
+            <div class="composer-bar">
+              <input type="file" id="fileInput" multiple accept="image/*,.log,.txt,.json,.md,.sql,.csv,.xml,.yml,.yaml" hidden />
+              <button type="button" class="icon-btn" id="attachBtn" aria-label="添加截图或日志文件" title="添加截图或日志文件">
+                <svg class="icon" aria-hidden="true"><use href="#i-clip" /></svg>
+              </button>
+              <span class="composer-hint">Enter 发送，Shift+Enter 换行</span>
+              <button type="submit" class="send-btn" id="sendBtn" aria-label="发送" disabled>
+                <svg class="icon" aria-hidden="true"><use href="#i-send" /></svg>
+              </button>
             </div>
-
-            <button class="send-btn" id="sendBtn" disabled title="发送 (Enter)">
-              <svg class="icon" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
-            </button>
-          </div>
+          </form>
         </div>
       </div>
     </main>
   </div>
 
-  <!-- 反馈错误弹窗 -->
-  <div id="feedbackModal" class="modal-overlay" hidden>
-    <div class="modal-card feedback-card">
-      <div class="modal-header">
-        <div class="modal-title-group">
-          <span class="feedback-icon-badge">🐞</span>
-          <h3>反馈排障错误与异常</h3>
-        </div>
-        <button class="icon-btn" onclick="closeFeedbackModal()">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="feedback-form-group">
-          <label class="form-label">问题分类</label>
-          <div class="feedback-type-tags">
-            <button class="type-tag active" data-type="排障结论错误">排障结论错误</button>
-            <button class="type-tag" data-type="金额/账单对账不符">账单对账不符</button>
-            <button class="type-tag" data-type="无法识别报错截图">无法识别报错截图</button>
-            <button class="type-tag" data-type="其他异常或建议">其他异常或建议</button>
-          </div>
-        </div>
-
-        <div class="feedback-form-group">
-          <label class="form-label">请具体描述遇到的问题或期望结果 <span class="required">*</span></label>
-          <textarea id="feedbackText" class="feedback-textarea" rows="4" placeholder="例如：该订单实际已经退款成功，但助手检索出的 balance 表未包含最新退款流水流水号..."></textarea>
-        </div>
-
-        <div class="feedback-context-preview">
-          <span class="context-icon">📎</span>
-          <span class="context-text" id="feedbackContextTip">将自动附带当前会话的全部排障记录与工具调用证据，方便研发快速复现。</span>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn" onclick="closeFeedbackModal()">取消</button>
-        <button class="btn primary" id="submitFeedbackBtn" onclick="submitFeedback()">
-          <span>发送反馈</span>
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 帮助弹窗 -->
-  <div id="helpModal" class="modal-overlay" hidden>
+  <div class="modal" id="feedbackModal" role="dialog" aria-modal="true" aria-labelledby="feedbackTitle" hidden>
     <div class="modal-card">
-      <div class="modal-header">
-        <h3>🎧 小康智能客服助手 · 排障使用指引</h3>
-        <button class="icon-btn" onclick="closeHelpModal()">✕</button>
+      <h2 id="feedbackTitle">反馈回答有误</h2>
+      <div class="field">
+        <span class="field-label" id="feedbackTypeLabel">哪里不对</span>
+        <div class="choice-group" role="radiogroup" aria-labelledby="feedbackTypeLabel">
+          <button type="button" class="choice is-on" role="radio" aria-checked="true" data-type="排障结论错误">结论错误</button>
+          <button type="button" class="choice" role="radio" aria-checked="false" data-type="金额/账单对账不符">数据对不上</button>
+          <button type="button" class="choice" role="radio" aria-checked="false" data-type="无法识别报错截图">没看懂截图</button>
+          <button type="button" class="choice" role="radio" aria-checked="false" data-type="其他异常或建议">其他</button>
+        </div>
       </div>
-      <div class="modal-body">
-        <p><b>✨ 常见使用场景与技巧：</b></p>
-        <ul>
-          <li><b>快捷对账</b>：输入订单号或账单 ID（如 <code>finance_bill_booker</code>），AI 会自动核对支付、退款及 balance 余额变动。</li>
-          <li><b>图片识别</b>：在输入框直接 <code>Ctrl+V</code> 粘贴用户发来的报错截图，自动定位到故障原因。</li>
-          <li><b>话术生成</b>：排障完成后输入“生成客服答复”，自动生成语气温和、逻辑清晰的回复话术。</li>
-          <li><b>安全机制</b>：涉及修改数据的操作会触发审批卡片，必须经客服确认后才会执行。</li>
-        </ul>
-      </div>
-      <div class="modal-footer" style="display:flex; justify-content:space-between; align-items:center;">
-        <button class="btn" onclick="manualCheckUpdate()" id="modalCheckUpdateBtn">🚀 检查新版本</button>
-        <button class="btn primary" onclick="closeHelpModal()">我知道了</button>
+      <label class="field">
+        <span class="field-label">具体情况</span>
+        <textarea id="feedbackText" rows="4" placeholder="例如：这个订单实际已经退款，回答却说没有退款记录"></textarea>
+      </label>
+      <p class="modal-note" id="feedbackContextTip">会附带本次会话的提问、排查过程和回答，方便技术同事核查。</p>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="button" class="btn btn-primary" id="feedbackSubmit">提交反馈</button>
       </div>
     </div>
   </div>
 
-  <!-- 轻提示 -->
-  <div id="toast" class="toast" hidden></div>
+  <div class="modal" id="helpModal" role="dialog" aria-modal="true" aria-labelledby="helpTitle" hidden>
+    <div class="modal-card">
+      <h2 id="helpTitle">使用说明</h2>
+      <dl class="help-list">
+        <dt>直接给单号</dt>
+        <dd>订单号、票号、PNR 都可以。助手会核对相关业务记录。回答里的单号点一下就能复制。</dd>
+        <dt>粘贴截图</dt>
+        <dd>在输入框里按 Ctrl+V 粘贴用户的报错截图，再补一句现象，比如“提交退票一直转圈”。</dd>
+        <dt>看印章判断把握</dt>
+        <dd>“已复核”表示完成证据核验；“需人工核实”表示仍有待确认事项；“未复核”表示尚未完成核验。请结合当前业务范围使用结论。</dd>
+        <dt>复制话术</dt>
+        <dd>“客服话术”下面有“复制话术”按钮，可以直接发给客户。</dd>
+        <dt>排查过程</dt>
+        <dd>回答上方的“排查过程”显示业务核对进度。答案保留工作所需的完整业务信息，内部技术资料由服务端管理。</dd>
+        <dt>修改操作要你批准</dt>
+        <dd>需要改文件或执行命令时会先出现确认卡片，你批准后才会执行。</dd>
+        <dt>回答不对</dt>
+        <dd>点回答下方的“回答有误”，会连同这次会话一起提交给技术同事核查。</dd>
+      </dl>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="checkUpdateBtn">检查更新</button>
+        <button type="button" class="btn btn-primary" data-close>知道了</button>
+      </div>
+    </div>
+  </div>
 
+  <div class="modal modal-image" id="imageModal" role="dialog" aria-modal="true" aria-label="查看截图" hidden>
+    <img id="imageModalImg" alt="截图" />
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" /></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.3 3.3 0 014.7 4.7l-8.6 8.6a1.7 1.7 0 01-2.4-2.4l7.9-7.9" /></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6" /></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" /></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M7 12h10" /></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 7.5v6M12 16.8v.2" /><circle cx="12" cy="12" r="9" /></symbol>
+    <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.2" /></symbol>
+    <symbol id="i-think" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 00-3.5 10.9c.6.5 1 1.2 1 2V16h5v-.1c0-.8.4-1.5 1-2A6 6 0 0012 3z" /></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V6a2 2 0 012-2h9" /></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3" /></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4h11l-2 4 2 4H5" /></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" /><path d="M14 3v5h5" /></symbol>
+  </svg>
+
+  <script src="/answer.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

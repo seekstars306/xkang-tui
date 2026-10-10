@@ -94,6 +94,14 @@ export class TokenManager {
     };
   }
 
+  /** Stable across device rebinding and server restarts; never use an employee display name as an owner key. */
+  public getSubjectId(token: string): string {
+    this.db.prepare('UPDATE auth_tokens SET subject_id=? WHERE token=? AND subject_id IS NULL').run(crypto.randomUUID(), token);
+    const row = this.db.prepare('SELECT subject_id FROM auth_tokens WHERE token=?').get(token) as { subject_id: string } | undefined;
+    if (!row) throw new Error('Unknown employee');
+    return row.subject_id;
+  }
+
   public unbindDevice(token: string): { success: boolean; message: string } {
     const record = this.getToken(token);
     if (!record) {

@@ -1,3 +1,4 @@
+import { isReminderMessage } from '../../harness/context.js';
 import React from 'react';
 import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
@@ -112,10 +113,11 @@ export function getFriendlyActionName(rawName?: string): string {
   if (name === 'ask_user_question') return '客服澄清提问';
   if (name === 'web_fetch') return '网页文档查阅';
   if (name === 'web_search') return '技术资料检索';
+  if (name === 'lookup_order') return '单号定位';
+  if (name === 'git_inspect') return '代码变更溯源';
+  if (name === 'search_logs' || name === 'list_log_apps') return '生产日志检索';
   if (name.includes('codegraph')) return '代码调用链分析';
-  if (name.includes('db')) return '业务配置检索';
-  if (name.includes('knowledge')) return '排障知识库检索';
-  if (name.includes('kg')) return '业务图谱分析';
+  if (name.includes('db')) return '业务数据查询';
   return '排障数据检索';
 }
 
@@ -126,8 +128,8 @@ export const ChatHistory: React.FC<ChatHistoryProps> = ({
   activeActionName,
   agentStatus = 'idle',
 }) => {
-  // Filter out system prompt for user display
-  const displayMessages = messages.filter((m) => m.role !== 'system');
+  // 系统提示词与 harness 注入的提醒不是对话内容，不在界面展示
+  const displayMessages = messages.filter((m) => m.role !== 'system' && !isReminderMessage(m));
 
   return (
     <Box flexDirection="column">

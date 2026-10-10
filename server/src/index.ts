@@ -10,6 +10,9 @@ import { setupDownloadRoutes } from './updater.js';
 import { TokenManager } from './token_manager.js';
 import { AppDatabase } from './db.js';
 import { FeedbackManager } from './feedback_manager.js';
+import { AgentStore } from './agent/store.js';
+import { AgentService } from './agent/service.js';
+import { mountAgentRoutes } from './agent/routes.js';
 
 // ---------------------------------------------------------------------------
 // Process-level crash guards: a misbehaving client (abrupt SSE disconnect,
@@ -45,17 +48,17 @@ export function startServer() {
     res.json({
       status: 'ok',
       service: 'xkang-company-server',
-      version: '1.0.0',
+      version: '2.0.0',
       activeModelAlias: PUBLIC_MODEL_ALIAS,
       timestamp: new Date().toISOString(),
     });
   });
 
-  // Client public config: returns codeRepoPath etc. for client startup (no auth required)
+  // Client capability discovery: never publish the company's checkout location.
   app.get('/config/client', (_req, res) => {
     res.json({
-      codeRepoPath: config.codeRepoPath || '',
-      serverVersion: '1.0.0',
+      businessApiVersion: 1,
+      serverVersion: '2.0.0',
       publicModelAlias: PUBLIC_MODEL_ALIAS,
     });
   });
@@ -65,6 +68,9 @@ export function startServer() {
 
   // 2. Admin routes: model switching, token management & device unbinding
   const adminAuth = createAdminMiddleware(config, audit);
+  const employeeAuth = createAuthMiddleware(config, audit, limiter, tokenManager);
+  const agentService = new AgentService(new AgentStore(appDb.db), config, audit, modelManager);
+  mountAgentRoutes(app, agentService, employeeAuth, adminAuth, audit);
 
   app.get('/admin/model', adminAuth, (_req: Request, res: Response) => {
     const active = modelManager.getActive();
@@ -191,11 +197,13 @@ export function startServer() {
   });
 
   // Public/Employee feedback submission API
-  app.post('/api/feedback', (req: Request, res: Response) => {
+  app.post('/api/feedback', employeeAuth, (req: Request, res: Response) => {
     const { content, feedbackType = '排障异常反馈', sessionId, sessionTitle, context } = req.body;
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : undefined;
     const userName = token ? tokenManager.getToken(token)?.name || '客服专员' : '客服专员';
+    const owned = sessionId ? agentService.store.load(req.user!.subjectId!, String(sessionId)) : null;
+    if (sessionId && !owned) { res.status(404).json({ error: '会话不存在' }); return; }
 
     if (!content || !String(content).trim()) {
       res.status(400).json({ error: 'content 反馈内容不能为空' });
@@ -208,8 +216,8 @@ export function startServer() {
       feedbackType,
       content: String(content).trim(),
       sessionId,
-      sessionTitle,
-      context: Array.isArray(context) ? context : undefined,
+      sessionTitle: owned?.public.title,
+      context: owned?.messages,
     });
 
     res.json({
@@ -260,8 +268,8 @@ export function startServer() {
   });
 
   // 3. Employee auth middleware for protected MCP & LLM routes (with device binding gate)
-  const employeeAuth = createAuthMiddleware(config, audit, limiter, tokenManager);
-  app.use(['/mcp', '/v1', '/codegraph'], employeeAuth);
+  app.use(['/mcp', '/codegraph'], adminAuth);
+  app.use('/v1', employeeAuth);
 
   // 4. Mount CodeGraph query API
   app.post('/codegraph/api/query', (req: Request, res: Response) => {
@@ -279,8 +287,12 @@ export function startServer() {
   setupMcpServer(app, config, audit);
 
   // 6. Mount LLM proxy service with dynamic model manager
-  const llmHandler = setupLlmProxy(config, audit, modelManager);
+  const llmHandler = setupLlmProxy(config, audit, modelManager, { localOnly: true });
   app.post('/v1/chat/completions', llmHandler);
+  app.use(((error, _req, res, _next) => {
+    if (!res.headersSent) res.status(500).json({ error: '请求未完成，请稍后重试。' });
+    else res.end();
+  }) as import('express').ErrorRequestHandler);
 
   const server = app.listen(config.port, () => {
     console.log(`====================================================`);
