@@ -1,5 +1,10 @@
 import express, { Request, Response } from 'express';
+import fs from 'node:fs';
 import path from 'node:path';
+import net from 'node:net';
+import { createServer } from 'node:http';
+import { fileURLToPath } from 'node:url';
+import { getHeapStatistics } from 'node:v8';
 import { loadServerConfig } from './config.js';
 import { AuditLogger, RateLimiter, createAuthMiddleware, createAdminMiddleware } from './auth.js';
 import { setupMcpServer } from './mcp.js';
@@ -14,17 +19,42 @@ import { AgentStore } from './agent/store.js';
 import { AgentService } from './agent/service.js';
 import { mountAgentRoutes } from './agent/routes.js';
 
+const entryPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
+const modulePath = fileURLToPath(import.meta.url);
+const directExecution = process.platform === 'win32'
+  ? entryPath.toLowerCase() === modulePath.toLowerCase()
+  : entryPath === modulePath;
+
+function lifecycle(event: string, details: Record<string, string | number> = {}): void {
+  if (!directExecution) return;
+  try {
+    fs.mkdirSync(path.resolve('data'), { recursive: true });
+    fs.appendFileSync(path.resolve('data/service-lifecycle.jsonl'), JSON.stringify({
+      timestamp: new Date().toISOString(), pid: process.pid, event, ...details,
+    }) + '\n');
+  } catch {
+    console.error('[Server] 无法写入启动/退出诊断日志。');
+  }
+}
+
+function errorCode(error: unknown): string {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return typeof code === 'string' ? code : error instanceof Error ? error.name : 'UNKNOWN';
+}
+
 // ---------------------------------------------------------------------------
 // Process-level crash guards: a misbehaving client (abrupt SSE disconnect,
 // malformed request, broken pipe) must NEVER take down the whole server.
 // ---------------------------------------------------------------------------
 process.on('uncaughtException', (err: Error) => {
-  console.error('[CrashGuard] 捕获未处理同步异常 (服务继续运行):', err?.message || err);
+  lifecycle('uncaught_exception', { code: errorCode(err) });
+  console.error('[CrashGuard] 捕获未处理异常，请检查 /healthz:', err?.message || err);
 });
 
 process.on('unhandledRejection', (reason: unknown) => {
   const msg = reason instanceof Error ? reason.message : String(reason);
-  console.error('[CrashGuard] 捕获未处理 Promise 拒绝 (服务继续运行):', msg);
+  lifecycle('unhandled_rejection', { code: errorCode(reason) });
+  console.error('[CrashGuard] 捕获未处理 Promise 拒绝，请检查 /healthz:', msg);
 });
 
 export function startServer() {
@@ -229,7 +259,6 @@ export function startServer() {
 
   // Admin CodeGraph Manual Sync & Hot-rebuild API
   const syncManager = getCodeSyncManager(config);
-  initCodeSyncScheduler(config);
 
   app.get('/admin/codegraph/status', adminAuth, (_req: Request, res: Response) => {
     res.json({
@@ -294,26 +323,94 @@ export function startServer() {
     else res.end();
   }) as import('express').ErrorRequestHandler);
 
-  const server = app.listen(config.port, () => {
-    console.log(`====================================================`);
-    console.log(`🚀 xkang 公司核心服务端已启动`);
-    console.log(`   监听端口: http://localhost:${config.port}`);
-    console.log(`   当前活跃模型 (服务端调度): ${modelManager.getActive()}`);
-    console.log(`   客户端公开别名: ${PUBLIC_MODEL_ALIAS}`);
-    console.log(`   MCP SSE 端点: http://localhost:${config.port}/mcp/sse`);
-    console.log(`   LLM 代理端点: http://localhost:${config.port}/v1/chat/completions`);
-    console.log(`   管理员接口: http://localhost:${config.port}/admin/model`);
-    console.log(`   已授权员工令牌: ${config.tokens.size} 个, 管理员令牌: ${config.adminTokens.size} 个`);
-    console.log(`====================================================`);
+  const server = createServer(app);
+  let scheduler: ReturnType<typeof initCodeSyncScheduler> = null;
+  server.on('error', error => {
+    lifecycle('http_error', { port: config.port, code: errorCode(error) });
+    console.error('[Server] HTTP 监听错误:', errorCode(error));
   });
+  const ready = new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.once('listening', () => {
+      try {
+        // 只有监听成功后才启动后台同步，失败实例不能修改代码镜像。
+        scheduler = initCodeSyncScheduler(config);
+        console.log(`====================================================`);
+        console.log(`🚀 xkang 公司核心服务端已启动`);
+        console.log(`   进程 PID: ${process.pid}`);
+        console.log(`   监听端口: http://localhost:${config.port}`);
+        console.log(`   当前活跃模型 (服务端调度): ${modelManager.getActive()}`);
+        console.log(`   客户端公开别名: ${PUBLIC_MODEL_ALIAS}`);
+        console.log(`   MCP SSE 端点: http://localhost:${config.port}/mcp/sse`);
+        console.log(`   LLM 代理端点: http://localhost:${config.port}/v1/chat/completions`);
+        console.log(`   管理员接口: http://localhost:${config.port}/admin/model`);
+        console.log(`   已授权员工令牌: ${config.tokens.size} 个, 管理员令牌: ${config.adminTokens.size} 个`);
+        console.log(`====================================================`);
+        resolve();
+      } catch (error) {
+        server.close();
+        reject(error);
+      }
+    });
+  });
+  // 旧嵌入式调用方仍可监听 server 事件；CLI 和新调用方等待 ready。
+  void ready.catch(() => {});
+  server.once('close', () => scheduler?.stop());
+  server.listen(config.port);
 
-  return { app, server, config, modelManager };
+  return { app, server, config, modelManager, ready };
 }
 
-// Direct execution
-if (
-  (process.argv[1] && process.argv[1].endsWith('index.ts')) ||
-  process.argv[1]?.endsWith('index.js')
-) {
-  startServer();
+async function runDirect(): Promise<void> {
+  let port = 0;
+  let exitReason = 'event_loop_finished';
+  process.once('exit', exitCode => lifecycle('exit', { port, exitCode, reason: exitReason }));
+  try {
+    port = loadServerConfig().port;
+    const diagnostics = path.resolve('data/diagnostics');
+    fs.mkdirSync(diagnostics, { recursive: true });
+    if (process.report) {
+      process.report.directory = diagnostics;
+      process.report.excludeEnv = true;
+    }
+    lifecycle('starting', { port, parentPid: process.ppid, heapLimitBytes: getHeapStatistics().heap_size_limit });
+    // 在创建业务数据库、加载大图谱前检查端口；真实监听仍由 ready 再次确认。
+    await new Promise<void>((resolve, reject) => {
+      const probe = net.createServer(socket => socket.destroy());
+      probe.once('error', reject);
+      probe.listen(port, () => probe.close(error => error ? reject(error) : resolve()));
+    });
+    const { server, ready } = startServer();
+    await ready;
+    lifecycle('started', { port, rssBytes: process.memoryUsage().rss });
+    let stopping = false;
+    const stop = (signal: NodeJS.Signals) => {
+      if (stopping) return;
+      stopping = true;
+      exitReason = signal;
+      lifecycle('stop_requested', { port, signal });
+      console.log(`[Server] 收到 ${signal}，正在停止服务（PID ${process.pid}）。`);
+      server.close(() => process.exit(0));
+      server.closeAllConnections();
+      setTimeout(() => process.exit(1), 5000).unref();
+    };
+    process.once('SIGINT', () => stop('SIGINT'));
+    process.once('SIGTERM', () => stop('SIGTERM'));
+    server.once('close', () => {
+      if (!stopping) exitReason = 'listener_closed';
+      lifecycle('http_closed', { port, reason: exitReason });
+    });
+  } catch (error) {
+    exitReason = 'startup_failed';
+    const code = errorCode(error);
+    lifecycle('startup_failed', { port, code });
+    const message = code === 'EADDRINUSE'
+      ? `端口 ${port} 已被占用，本次进程（PID ${process.pid}）未启动。请确认已有服务，或先停止它再启动。`
+      : code === 'EACCES' ? `没有权限监听端口 ${port}。`
+      : error instanceof Error ? error.message : String(error);
+    console.error('[启动失败]', message);
+    process.exit(1);
+  }
 }
+
+if (directExecution) void runDirect();
