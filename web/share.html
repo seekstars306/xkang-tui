@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>排查结论</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,"Microsoft YaHei",sans-serif; background:#f5f6f8; color:#1f2329;
+         font-size:15px; line-height:1.7; }
+  .wrap { max-width:760px; margin:0 auto; padding:20px 18px 60px; }
+  .card { background:#fff; border-radius:10px; padding:22px 22px 18px; margin-bottom:14px;
+          box-shadow:0 1px 4px rgba(0,0,0,.05); }
+  h1 { margin:0 0 4px; font-size:19px; font-weight:600; }
+  .meta { font-size:12.5px; color:#86909c; display:flex; gap:14px; flex-wrap:wrap; }
+  h2 { font-size:14px; margin:0 0 10px; font-weight:600; color:#1f2329;
+       padding-left:9px; border-left:3px solid #165dff; }
+  .body-text { white-space:pre-wrap; word-break:break-word; }
+  .kv { display:grid; grid-template-columns:100px 1fr; gap:7px 14px; font-size:14px; }
+  .kv dt { color:#86909c; } .kv dd { margin:0; word-break:break-all; }
+  ul { margin:0; padding-left:20px; } li { margin-bottom:5px; }
+  .badge { display:inline-block; font-size:12px; padding:1px 7px; border-radius:3px;
+           background:#fff7e8; color:#ff7d00; font-weight:500; }
+  .badge.ok { background:#e8ffea; color:#00b42a; }
+  .fb { text-align:center; padding:24px 22px; }
+  .fb-title { font-size:15px; font-weight:600; margin-bottom:16px; }
+  .fb-btns { display:flex; gap:14px; justify-content:center; }
+  .fb-btn { border:1px solid #d9dce1; background:#fff; border-radius:8px; padding:11px 30px;
+            font-size:22px; cursor:pointer; transition:all .15s; }
+  .fb-btn:hover { border-color:#165dff; background:#f2f7ff; }
+  .fb-btn[disabled] { opacity:.45; cursor:not-allowed; }
+  .fb-comment { margin-top:16px; display:none; }
+  .fb-comment.show { display:block; }
+  textarea { width:100%; min-height:80px; padding:10px; border:1px solid #d9dce1; border-radius:6px;
+             font-family:inherit; font-size:14px; resize:vertical; }
+  .fb-submit { margin-top:10px; padding:8px 22px; border:none; border-radius:6px;
+               background:#165dff; color:#fff; font-size:14px; cursor:pointer; }
+  .fb-submit:hover { background:#0e42d2; }
+  .fb-done { color:#00b42a; font-size:14px; }
+  .fb-hint { font-size:12.5px; color:#86909c; margin-top:10px; }
+  .expired { text-align:center; padding:60px 20px; color:#86909c; }
+</style>
+</head>
+<body>
+<div class="wrap" id="app"><div class="card expired">加载中…</div></div>
+<script>
+const token = new URLSearchParams(location.search).get('t') || location.pathname.split('/').pop();
+const $ = s => document.querySelector(s);
+const esc = v => String(v ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt = t => t ? new Date(t).toLocaleString('zh-CN', { hour12:false }) : '—';
+let answer = null, taskInfo = null, rated = null;
+
+async function load(){
+  const r = await fetch('/share/' + encodeURIComponent(token), { headers:{ Accept:'application/json' } });
+  if (r.status === 404 || r.status === 410) {
+    $('#app').innerHTML = '<div class="card expired"><h1>链接已失效</h1><p>该链接已过期或被撤销。</p></div>';
+    return;
+  }
+  const j = await r.json();
+  answer = j.answer; taskInfo = j.task; rated = j.feedback;
+  render();
+}
+
+function render(){
+  const a = answer || {};
+  const conclusion = a.conclusion || '本次未形成可直接采信的结论。';
+  const data = (a.businessData || []);
+  const evidence = (a.evidenceSummary || []);
+  const pending = (a.pendingItems || []);
+  const reply = a.customerReply || '';
+
+  $('#app').innerHTML = `
+    <div class="card">
+      <h1>排查结论</h1>
+      <div class="meta">
+        <span>编号 ${esc(taskInfo.id)}</span>
+        <span>${fmt(taskInfo.finishedAt || taskInfo.startedAt)}</span>
+        <span class="badge ${a.reviewStatus === 'reviewed' ? 'ok' : ''}">${a.reviewStatus === 'reviewed' ? '已复核' : '需人工核实'}</span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>结论</h2>
+      <div class="body-text">${esc(conclusion)}</div>
+    </div>
+    ${data.length ? `<div class="card"><h2>业务信息</h2><dl class="kv">
+      ${data.map(d => `<dt>${esc(d.label)}</dt><dd>${esc(d.value)}</dd>`).join('')}
+    </dl></div>` : ''}
+    ${reply ? `<div class="card"><h2>客服话术</h2><div class="body-text">${esc(reply)}</div></div>` : ''}
+    ${evidence.length ? `<div class="card"><h2>依据</h2><ul>
+      ${evidence.map(e => `<li>${esc(e)}</li>`).join('')}
+    </ul></div>` : ''}
+    ${pending.length ? `<div class="card"><h2>还需确认</h2><ul>
+      ${pending.map(p => `<li>${esc(p)}</li>`).join('')}
+    </ul></div>` : ''}
+    <div class="card fb" id="fb"></div>`;
+
+  renderFeedback();
+}
+
+function renderFeedback(){
+  const el = $('#fb');
+  if (rated) {
+    el.innerHTML = `<div class="fb-title">答案是否准确？需要您的反馈</div>
+      <div class="fb-done">已收到您的评价：${rated.vote === 'up' ? '👍 准确' : '👎 不准确'}，感谢反馈。</div>
+      ${rated.comment ? `<div class="fb-hint">补充说明：${esc(rated.comment)}</div>` : ''}
+      <div class="fb-hint">每份答案只接受一次评价。</div>`;
+    return;
+  }
+  el.innerHTML = `<div class="fb-title">答案是否准确？需要您的反馈</div>
+    <div class="fb-btns">
+      <button class="fb-btn" id="up" title="准确">👍</button>
+      <button class="fb-btn" id="down" title="不准确">👎</button>
+    </div>
+    <div class="fb-comment" id="cbox">
+      <textarea id="c" placeholder="选填：哪里不准确？（不填也可以直接提交）"></textarea>
+      <button class="fb-submit" id="submit">提交评价</button>
+    </div>
+    <div class="fb-hint">每份答案只接受一次评价，提交后不可修改。</div>`;
+
+  $('#up').onclick = () => submit('up', null);
+  $('#down').onclick = () => {
+    $('#cbox').classList.add('show');
+    $('#up').disabled = true; $('#down').disabled = true;
+    $('#c').focus();
+  };
+  const sb = $('#submit');
+  if (sb) sb.onclick = () => submit('down', $('#c').value.trim() || null);
+}
+
+async function submit(vote, comment){
+  const r = await fetch('/share/' + encodeURIComponent(token) + '/feedback', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ vote, comment }),
+  });
+  const j = await r.json().catch(()=>({}));
+  if (r.ok) { rated = { vote, comment }; renderFeedback(); return; }
+  if (r.status === 409) { rated = j.feedback || { vote: 'unknown' }; renderFeedback(); return; }
+  alert(j.error || '提交失败，请稍后重试');
+  location.reload();
+}
+
+load();
+</script>
+</body>
+</html>

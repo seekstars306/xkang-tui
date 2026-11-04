@@ -1,0 +1,396 @@
+{
+  "generatedAt": "2026-10-25T06:27:16.287Z",
+  "logicalRoot": "D:/skt_project",
+  "warnings": [
+    "部署名与配置目录名不一致：cxy-booking 的配置在 cxy-dpxt 目录下，按目录名找会找不到。",
+    "一个仓库部署多个服务：skt_dpxt_background 同时支撑 cxy-booking / cxy-booking-test / cxy-booking-timer。",
+    "repoConfidence=high 表示有 jar 或 logger 直接证据；low 表示仅目录名推测；none 表示未找到。",
+    "cxy-hotel/cxy-sms 的仓库归属已用「代码库 app 名 == prod-config app 名」二次验证。"
+  ],
+  "services": {
+    "cxy-book-ticket": {
+      "deployName": "cxy-book-ticket",
+      "configDir": "skt-back/prod-config/cxy-book-ticket",
+      "image": "harbor.skt.com/cxy-book-ticket/issue:v1.2",
+      "containerPort": null,
+      "nodePort": null,
+      "sources": [
+        "cxy-book-ticket/cxy-book-ticket-issue.yaml"
+      ],
+      "repos": [],
+      "packages": [],
+      "loggers": [],
+      "repo": "skt_dpxt_background",
+      "repoEvidence": "疑为 dpxt 衍生",
+      "repoConfidence": "low",
+      "packageRoots": [
+        "com.company.project"
+      ]
+    },
+    "cxy-crm": {
+      "deployName": "cxy-crm",
+      "configDir": "skt-back/prod-config/cxy-crm",
+      "image": "harbor.skt.com/cxy-crm/issue:v1.16",
+      "containerPort": null,
+      "nodePort": null,
+      "sources": [
+        "cxy-crm/cxy-crm-issue.yaml"
+      ],
+      "repos": [],
+      "packages": [],
+      "loggers": [],
+      "repo": "skt_cxy",
+      "repoEvidence": "jar cxy-base-data，疑在 skt_cxy/cxy-base-data 模块",
+      "repoConfidence": "low",
+      "packageRoots": [
+        "com.cxy.vo",
+        "com.llb.cxy"
+      ]
+    },
+    "cxy-booking": {
+      "deployName": "cxy-booking",
+      "configDir": "skt-back/prod-config/cxy-dpxt",
+      "image": "harbor.skt.com/cxy-booking/issue:v1.264",
+      "containerPort": null,
+      "nodePort": null,
+      "sources": [
+        "cxy-dpxt/cxy-dpxt-issue.yaml"
+      ],
+      "repos": [],
+      "packages": [],
+      "loggers": [],
+      "repo": "skt_dpxt_background",
+      "repoEvidence": "logger com.company.project.* + jar dpxt.jar",
+      "repoConfidence": "high",
+      "packageRoots": [
+        "com.company.project"
+      ]
+    },
+    "cxy-booking-test": {
+      "deployName": "cxy-booking-test",
+      "configDir": "skt-back/prod-config/cxy-dpxt-test",
+      "image": "harbor.skt.com/cxy-booking/issue:v1.260",
+      "containerPort": null,
+      "nodePort": null,
+      "sources": [
+        "cxy-dpxt-test/cxy-dpxt-issue.yaml"
+      ],
+      "repos": [],
+      "packages": [],
+      "loggers": [],
+      "repo": "skt_dpxt_background",
+      "repoEvidence": "jar dpxt.jar（与 cxy-booking 同镜像系列）",
+      "repoConfidence": "high",
+      "packageRoots": [
+        "com.company.project"
+      ]
+    },
+    "cxy-booking-timer": {
+      "deployName": "cxy-booking-timer",
+      "configDir": "skt-back/prod-config/cxy-dpxt-timer",
+      "image": "harbor.skt.com/cxy-booking-timer/issue:v1.0",
+      "containerPort": null,
+      "nodePort": null,
+      "sources": [
+        "cxy-dpxt-timer/cxy-dpxt-issue.yaml"
+      ],
+      "repos": [],
+      "packages": [],
+      "loggers": [],
+      "repo": "skt_dpxt_background",
+      "repoEvidence": "jar dpxt.jar",
+      "repoConfidence": "high",
+      "packageRoots": [
+        "com.company.project"
+      ]
+    },
+    "cxy-eureka": {
+      "deployName": "cxy-eureka",
+      "configDir": "skt-back/prod-config/cxy-eureka",
+      "image": "harbor.skt.com/cxy-eureka/issue:v1.10",
+      "containerPort": null,
+      "nodePort": null,
+      "sources": [
+        "cxy-eureka/cxy-eureka-issue.yaml"
+      ],
+      "repos": [],
+      "packages": [],
+      "loggers": [],
+      "repo": "?",
+      "repoEvidence": "基础组件，可能不在业务仓库内",
+      "repoConfidence": "none",
+      "packageRoots": []
+    },
+    "cxy-hotel": {
+      "deployName": "cxy-hotel",
+      "configDir": "skt-back/prod-config/cxy-hotel",
+      "image": "harbor.skt.com/cxy-hotel/issue:v1.35",
+      "containerPort": null,
+      "nodePort": null,
+      "sources": [
+        "cxy-hotel/cxy-hotel-issue.yaml"
+      ],
+      "repos": [],
+      "packages": [],
+      "loggers": [],
+      "repo": "sktprojecthotel",
+      "repoEvidence": "sktprojecthotel/skt-system/src/main/resources/application.yml 中 spring.application.name=sktProject，与 prod-config/cxy-hotel 一致",
+      "repoConfidence": "high",
+      "packageRoots": [
+        "com.project.common",
+        "com.project.remote"
+      ]
+    },
+    "cxy-ibe": {
+      "deployName": "cxy-ibe",
+      "configDir": "skt-back/prod-config/cxy-ibe",
+      "image": "harbor.skt.com/cxy-ibe/issue:v1.1",
+      "containerPort": null,
+      "nodePort": null,
+      "sources": [
+        "cxy-ibe/cxy-ibe-issue.yaml"
+      ],
+      "repos": [],
+      "packages": [],
+      "loggers": [],
+      "repo": "ibemonitor",
+      "repoEvidence": "jar ibeMonitor.jar",
+      "repoConfidence": "high",
+      "packageRoots": []
+    },
+    "cxy-sms": {
+      "deployName": "cxy-sms",
+      "configDir": "skt-back/prod-config/cxy-sms",
+      "image": "harbor.skt.com/cxy-sms/issue:v1.29",
+      "containerPort": null,
+      "nodePort": null,
+      "sources": [
+        "cxy-sms/cxy-sms-issue.yaml"
+      ],
+      "repos": [],
+      "packages": [],
+      "loggers": [],
+      "repo": "skt_project_sms",
+      "repoEvidence": "skt_project_sms/skt-system/src/main/resources/application.yml 中 spring.application.name=sktProjectSms，与 prod-config/cxy-sms 一致",
+      "repoConfidence": "high",
+      "packageRoots": [
+        "com.project.common",
+        "com.project.remote"
+      ]
+    },
+    "cxy-transfer": {
+      "deployName": "cxy-transfer",
+      "configDir": "skt-back/prod-config/cxy-transfer",
+      "image": "harbor.skt.com/cxy-transfer/issue:v1.41",
+      "containerPort": null,
+      "nodePort": null,
+      "sources": [
+        "cxy-transfer/cxy-transfer-issue.yaml"
+      ],
+      "repos": [],
+      "packages": [],
+      "loggers": [],
+      "repo": "?",
+      "repoEvidence": "未找到",
+      "repoConfidence": "none",
+      "packageRoots": []
+    },
+    "cxy-web": {
+      "deployName": "cxy-web",
+      "configDir": "skt-back/prod-config/cxy-web",
+      "image": "harbor.skt.com/cxy-web/issue:v1.318",
+      "containerPort": null,
+      "nodePort": null,
+      "sources": [
+        "cxy-web/cxy-web-issue.yaml"
+      ],
+      "repos": [],
+      "packages": [],
+      "loggers": [],
+      "repo": "skt_cxy",
+      "repoEvidence": "pom artifactId cxy-web",
+      "repoConfidence": "high",
+      "packageRoots": [
+        "com.cxy.vo",
+        "com.llb.cxy"
+      ]
+    },
+    "cxy-web-timer": {
+      "deployName": "cxy-web-timer",
+      "configDir": "skt-back/prod-config/cxy-web-timer",
+      "image": null,
+      "containerPort": 8081,
+      "nodePort": 31080,
+      "sources": [
+        "cxy-web-timer/cxy-web-timer-service.yaml"
+      ],
+      "repos": [],
+      "packages": [],
+      "loggers": [],
+      "repo": "skt_cxy",
+      "repoEvidence": "Dockerfile 与 cxy-web 同 ENTRYPOINT /usr/local/cxyweb",
+      "repoConfidence": "high",
+      "packageRoots": [
+        "com.cxy.vo",
+        "com.llb.cxy"
+      ]
+    }
+  },
+  "repoModules": {
+    "ibemonitor": [
+      {
+        "module": "src",
+        "package": "com.spring"
+      }
+    ],
+    "logmanage": [
+      {
+        "module": "src",
+        "package": "com.sktLog"
+      }
+    ],
+    "payment-service": [
+      {
+        "module": "payment-common\\src",
+        "package": "com.payment.common.dto"
+      },
+      {
+        "module": "payment-core\\src",
+        "package": "com.payment.core.callback"
+      },
+      {
+        "module": "payment-entity\\src",
+        "package": "com.payment.entity"
+      },
+      {
+        "module": "payment-gateway\\src",
+        "package": "com.payment.gateway"
+      },
+      {
+        "module": "payment-repository\\src",
+        "package": "com.payment.repository.mapper"
+      },
+      {
+        "module": "payment-sdk\\src",
+        "package": "com.payment.sdk"
+      },
+      {
+        "module": "payment-web\\src",
+        "package": "com.payment.web"
+      }
+    ],
+    "prod-config": [],
+    "sktprojecthotel": [
+      {
+        "module": "skt-common\\src",
+        "package": "com.project.common.config"
+      },
+      {
+        "module": "skt-remote\\src",
+        "package": "com.project.remote.base"
+      },
+      {
+        "module": "skt-system\\src",
+        "package": "com.project"
+      }
+    ],
+    "skt_cxy": [
+      {
+        "module": "cxy-api\\src",
+        "package": "com.cxy.vo"
+      },
+      {
+        "module": "cxy-base-data\\src",
+        "package": "com.llb.cxy"
+      },
+      {
+        "module": "cxy-call-center\\src",
+        "package": "com.llb.cxy"
+      },
+      {
+        "module": "cxy-common\\src",
+        "package": "com.llb.cxy"
+      },
+      {
+        "module": "cxy-system\\src",
+        "package": "com.llb.cxy.boot.config.filter"
+      },
+      {
+        "module": "cxy-web\\src",
+        "package": "com.llb.cxy"
+      }
+    ],
+    "skt_dpxt_background": [
+      {
+        "module": "src",
+        "package": "com.company.project"
+      }
+    ],
+    "skt_project_sms": [
+      {
+        "module": "skt-common\\src",
+        "package": "com.project.common.annotation"
+      },
+      {
+        "module": "skt-remote\\src",
+        "package": "com.project.remote.djTong.config"
+      },
+      {
+        "module": "skt-system\\src",
+        "package": "com.project"
+      }
+    ]
+  },
+  "packageRootToServices": {
+    "com.company.project": [
+      "cxy-book-ticket",
+      "cxy-booking",
+      "cxy-booking-test",
+      "cxy-booking-timer"
+    ],
+    "com.cxy.vo": [
+      "cxy-crm",
+      "cxy-web",
+      "cxy-web-timer"
+    ],
+    "com.llb.cxy": [
+      "cxy-crm",
+      "cxy-web",
+      "cxy-web-timer"
+    ],
+    "com.project.common": [
+      "cxy-hotel",
+      "cxy-sms"
+    ],
+    "com.project.remote": [
+      "cxy-hotel",
+      "cxy-sms"
+    ]
+  },
+  "repoPackages": {
+    "payment-service": [
+      "com.payment.common",
+      "com.payment.core",
+      "com.payment.entity",
+      "com.payment.gateway",
+      "com.payment.repository",
+      "com.payment.sdk",
+      "com.payment.web"
+    ],
+    "sktprojecthotel": [
+      "com.project.common",
+      "com.project.remote"
+    ],
+    "skt_cxy": [
+      "com.cxy.vo",
+      "com.llb.cxy"
+    ],
+    "skt_dpxt_background": [
+      "com.company.project"
+    ],
+    "skt_project_sms": [
+      "com.project.common",
+      "com.project.remote"
+    ]
+  }
+}

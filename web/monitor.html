@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>飞书监控台</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, "Microsoft YaHei", sans-serif; background:#f5f6f8; color:#1f2329; font-size:14px; }
+  header { background:#fff; border-bottom:1px solid #e5e6eb; padding:14px 20px; display:flex; align-items:center; gap:24px; position:sticky; top:0; z-index:10; }
+  header h1 { margin:0; font-size:17px; font-weight:600; }
+  .stats { display:flex; gap:18px; font-size:13px; color:#4e5969; }
+  .stats b { font-weight:600; }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+  .dot.run { background:#00b42a; } .dot.queue { background:#ff7d00; } .dot.done { background:#86909c; }
+  main { display:flex; height:calc(100vh - 57px); }
+  aside { width:210px; background:#fff; border-right:1px solid #e5e6eb; padding:14px; overflow-y:auto; flex-shrink:0; }
+  aside h3 { font-size:12px; color:#86909c; margin:14px 0 6px; font-weight:600; letter-spacing:.5px; }
+  aside h3:first-child { margin-top:0; }
+  .filter-item { padding:6px 8px; border-radius:4px; cursor:pointer; color:#4e5969; font-size:13px; display:flex; justify-content:space-between; }
+  .filter-item:hover { background:#f2f3f5; }
+  .filter-item.active { background:#e8f3ff; color:#165dff; font-weight:500; }
+  .filter-item span { color:#86909c; font-size:12px; }
+  .list { width:340px; background:#fff; border-right:1px solid #e5e6eb; overflow-y:auto; flex-shrink:0; }
+  .task { padding:12px 14px; border-bottom:1px solid #f2f3f5; cursor:pointer; }
+  .task:hover { background:#fafbfc; }
+  .task.active { background:#e8f3ff; border-left:3px solid #165dff; padding-left:11px; }
+  .task-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; }
+  .task-meta { font-size:12px; color:#86909c; display:flex; gap:8px; margin-bottom:4px; }
+  .task-preview { font-size:12px; color:#4e5969; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .badge { font-size:11px; padding:1px 6px; border-radius:3px; font-weight:500; }
+  .badge.running { background:#e8ffea; color:#00b42a; }
+  .badge.queued { background:#fff7e8; color:#ff7d00; }
+  .badge.done { background:#f2f3f5; color:#4e5969; }
+  .badge.failed, .badge.timeout { background:#ffece8; color:#f53f3f; }
+  .detail { flex:1; overflow-y:auto; padding:18px 22px; }
+  .empty { color:#86909c; text-align:center; margin-top:80px; font-size:13px; }
+  .detail h2 { font-size:15px; margin:0 0 12px; font-weight:600; }
+  .kv { display:grid; grid-template-columns: 96px 1fr; gap:6px 12px; font-size:13px; margin-bottom:16px; }
+  .kv dt { color:#86909c; } .kv dd { margin:0; word-break:break-all; }
+  .tabs { display:flex; gap:2px; border-bottom:1px solid #e5e6eb; margin-bottom:14px; }
+  .tab { padding:7px 14px; cursor:pointer; font-size:13px; color:#4e5969; border-bottom:2px solid transparent; }
+  .tab.active { color:#165dff; border-bottom-color:#165dff; font-weight:500; }
+  .pane { display:none; } .pane.active { display:block; }
+  pre { background:#f7f8fa; border:1px solid #e5e6eb; border-radius:5px; padding:12px; overflow-x:auto; font-size:12.5px; line-height:1.65; white-space:pre-wrap; word-break:break-word; margin:0; font-family:ui-monospace,Consolas,monospace; }
+  .step { border-left:2px solid #e5e6eb; padding:0 0 14px 14px; position:relative; }
+  .step:last-child { border-left-color:transparent; padding-bottom:0; }
+  .step::before { content:''; position:absolute; left:-5px; top:3px; width:8px; height:8px; border-radius:50%; background:#c9cdd4; }
+  .step.answer::before { background:#00b42a; } .step.model::before { background:#165dff; }
+  .step-time { font-size:11px; color:#86909c; }
+  .step-title { font-size:13px; margin:2px 0; font-weight:500; }
+  .step-detail { font-size:12px; color:#4e5969; margin-top:3px; }
+  .toolbar { display:flex; gap:8px; margin-bottom:12px; }
+  button { padding:5px 12px; border:1px solid #d9dce1; background:#fff; border-radius:4px; cursor:pointer; font-size:12.5px; color:#1f2329; }
+  button:hover { border-color:#165dff; color:#165dff; }
+  .token-box { padding:16px; max-width:520px; margin:60px auto; background:#fff; border-radius:8px; border:1px solid #e5e6eb; }
+  .token-box input { width:100%; padding:9px 11px; border:1px solid #d9dce1; border-radius:4px; font-size:13px; margin:10px 0; }
+  .token-box p { color:#86909c; font-size:12.5px; margin:0 0 6px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const S = { token: localStorage.getItem('feishu_admin_token') || '', stats:null, tasks:[], active:null, detail:null, tab:'input', filter:{ status:'', chatId:'', requester:'' }, chats:[], requesters:[] };
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtTime = t => t ? new Date(t).toLocaleString('zh-CN', { hour12:false }) : '—';
+const fmtDur = ms => { if(!ms) return '—'; const s=Math.round(ms/1000); return s<60 ? s+'s' : Math.floor(s/60)+'m'+(s%60)+'s'; };
+const statusText = { running:'运行中', queued:'排队中', done:'已完成', failed:'失败', timeout:'超时' };
+
+async function api(path){
+  // 会话在 HttpOnly Cookie 里，前端不接触任何凭据
+  const r = await fetch('/admin/feishu' + path, { credentials: 'same-origin' });
+  if (r.status === 401) { location.href = '/admin/feishu/login'; throw new Error('unauthorized'); }
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+async function load(){
+  try {
+    const [stats, filters, tasks] = await Promise.all([api('/stats'), api('/filters'), api('/tasks?limit=60')]);
+    S.stats = stats; S.chats = filters.chats; S.requesters = filters.requesters; S.tasks = tasks;
+    if (S.active) await openTask(S.active, true);
+    render();
+  } catch (e) {
+    if (String(e.message).includes('unauthorized')) location.href = '/admin/feishu/login';
+  }
+}
+
+async function openTask(id, silent){
+  S.active = id;
+  try { S.detail = await api('/tasks/' + encodeURIComponent(id)); } catch { S.detail = null; }
+  if (!silent) render();
+}
+
+function render(){
+  const st = S.stats || { running:0, queued:0, todayDone:0, total:0 };
+  const list = S.tasks.filter(t => (!S.filter.status || t.status === S.filter.status)
+    && (!S.filter.chatId || t.chatId === S.filter.chatId)
+    && (!S.filter.requester || t.requesterOpenId === S.filter.requester));
+
+  $('#app').innerHTML = `
+    <header>
+      <h1>飞书监控台</h1>
+      <div class="stats">
+        <span><i class="dot run"></i>运行中 <b>${st.running}</b></span>
+        <span><i class="dot queue"></i>排队 <b>${st.queued}</b></span>
+        <span><i class="dot done"></i>今日完成 <b>${st.todayDone}</b></span>
+        <span>累计 <b>${st.total}</b></span>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <span style="font-size:12px;color:#86909c" id="whoami"></span>
+        <button id="refresh">刷新</button>
+        <button id="logout">退出</button>
+      </div>
+    </header>
+    <main>
+      <aside>
+        <h3>状态</h3>
+        <div class="filter-item ${!S.filter.status?'active':''}" data-f="status" data-v="">全部 <span>${S.tasks.length}</span></div>
+        ${['running','queued','done','failed'].map(s => `<div class="filter-item ${S.filter.status===s?'active':''}" data-f="status" data-v="${s}">${statusText[s]} <span>${S.tasks.filter(t=>t.status===s).length}</span></div>`).join('')}
+        <h3>群组</h3>
+        <div class="filter-item ${!S.filter.chatId?'active':''}" data-f="chatId" data-v="">全部</div>
+        ${S.chats.map(c => `<div class="filter-item ${S.filter.chatId===c.chat_id?'active':''}" data-f="chatId" data-v="${esc(c.chat_id)}">${esc(c.chat_name||c.chat_id.slice(0,10))} <span>${c.n}</span></div>`).join('')}
+        <h3>客服</h3>
+        <div class="filter-item ${!S.filter.requester?'active':''}" data-f="requester" data-v="">全部</div>
+        ${S.requesters.map(r => `<div class="filter-item ${S.filter.requester===r.requester_open_id?'active':''}" data-f="requester" data-v="${esc(r.requester_open_id)}">${esc(r.requester_name||r.requester_open_id.slice(0,10))} <span>${r.n}</span></div>`).join('')}
+      </aside>
+      <div class="list">
+        ${list.length ? list.map(t => `
+          <div class="task ${S.active===t.id?'active':''}" data-id="${esc(t.id)}">
+            <div class="task-top">
+              <span class="badge ${t.status}">${statusText[t.status]||t.status}</span>
+              <span style="font-size:11px;color:#86909c">${fmtDur(t.durationMs)}</span>
+            </div>
+            <div class="task-meta"><span>${esc(t.chatName||t.chatId.slice(0,12))}</span><span>${esc(t.requesterName||'—')}</span></div>
+            <div class="task-preview">${esc(t.preview||'(无输入)')}</div>
+          </div>`).join('') : '<div class="empty">还没有任务。在群里 @ 机器人试试。</div>'}
+      </div>
+      <div class="detail">${renderDetail()}</div>
+    </main>`;
+
+  document.querySelectorAll('.filter-item').forEach(el => el.onclick = () => {
+    S.filter[el.dataset.f] = el.dataset.v; render();
+  });
+  document.querySelectorAll('.task').forEach(el => el.onclick = () => openTask(el.dataset.id));
+  const rb = $('#refresh'); if (rb) rb.onclick = load;
+  const lb = $('#logout');
+  if (lb) lb.onclick = async () => {
+    await fetch('/admin/feishu/logout', { method:'POST', credentials:'same-origin' });
+    location.href = '/admin/feishu/login';
+  };
+  document.querySelectorAll('.tab').forEach(el => el.onclick = () => { S.tab = el.dataset.tab; render(); });
+  const copy = $('#copyInput'); if (copy) copy.onclick = () => { navigator.clipboard.writeText(S.detail?.task?.inputText || ''); copy.textContent='已复制'; };
+}
+
+function renderDetail(){
+  const d = S.detail;
+  if (!d) return '<div class="empty">从左侧选择一个任务</div>';
+  const t = d.task;
+  let answer = null;
+  try { answer = t.answerJson ? JSON.parse(t.answerJson) : null; } catch {}
+  const ansText = answer?.text || '';
+
+  const pane = {
+    input: `<pre>${esc(t.inputText || '(未记录输入)')}</pre>`,
+    steps: d.steps.length ? d.steps.map(s => `
+      <div class="step ${esc(s.kind)}">
+        <div class="step-time">${fmtTime(s.at)}</div>
+        <div class="step-title">${esc(s.summary)}</div>
+        ${s.detail ? `<div class="step-detail">${esc(s.detail)}</div>` : ''}
+      </div>`).join('') : '<div class="empty">暂无过程记录</div>',
+    output: `<pre>${esc(ansText || t.error || '(尚无输出)')}</pre>`,
+  };
+
+  return `
+    <h2>任务 ${esc(t.id)}</h2>
+    <dl class="kv">
+      <dt>状态</dt><dd><span class="badge ${t.status}">${statusText[t.status]||t.status}</span>${t.reviewStatus ? ' · 复核 '+esc(t.reviewStatus) : ''}</dd>
+      <dt>群组</dt><dd>${esc(t.chatName||t.chatId)}</dd>
+      <dt>发起客服</dt><dd>${esc(t.requesterName||t.requesterOpenId)}</dd>
+      ${t.originAuthorOpenId && t.originAuthorOpenId !== t.requesterOpenId
+        ? `<dt>原问题作者</dt><dd>${esc(t.originAuthorOpenId)} <span style="color:#86909c">（与发起人不同，回复会同时 @ 两人）</span></dd>`
+        : ''}
+      <dt>排队 / 开始</dt><dd>${fmtTime(t.queuedAt)} → ${fmtTime(t.startedAt)}</dd>
+      <dt>耗时</dt><dd>${fmtDur(t.durationMs)}</dd>
+      <dt>上下文</dt><dd>保留 ${t.keptCount ?? '—'} / 窗口 ${t.windowCount ?? '—'} 条 · 附件 ${t.attachmentCount ?? 0} 个</dd>
+      <dt>原消息</dt><dd>${esc(t.originMessageId)}</dd>
+      ${t.error ? `<dt>错误</dt><dd style="color:#f53f3f">${esc(t.error)}</dd>` : ''}
+    </dl>
+    <div class="tabs">
+      <div class="tab ${S.tab==='input'?'active':''}" data-tab="input">清洗后输入</div>
+      <div class="tab ${S.tab==='steps'?'active':''}" data-tab="steps">分析过程</div>
+      <div class="tab ${S.tab==='output'?'active':''}" data-tab="output">详细输出</div>
+    </div>
+    <div class="toolbar"><button id="copyInput">复制输入</button></div>
+    <div class="pane active">${pane[S.tab]}</div>`;
+}
+
+load();
+setInterval(() => { load(); }, 10000);
+</script>
+</body>
+</html>

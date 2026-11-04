@@ -1,0 +1,97 @@
+{
+  "_readme": "部署清单 schema 样例（占位值，进 git）。真实清单写在 tests/eval/reports/exec-v3/deployment-manifest.json（git 忽略）。service 名单取自 list_log_apps 在 cxy 命名空间的实测返回（9 个）；repo 为按镜像结构的最佳推测，须由开发在 G6 确认；artifactSha256 与 commit 为占位格式示例，真实值由开发/运维提供。",
+  "generatedAt": "2026-10-15T00:00:00Z",
+  "approvedBy": "<开发或运维姓名>",
+  "entries": [
+    {
+      "service": "cxy-web",
+      "repo": "skt-back/skt_cxy",
+      "environment": "prod",
+      "artifact": "war",
+      "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "commit": "0000000000000000000000000000000000000000",
+      "tag": "P1.2.1",
+      "effectiveAt": "2026-10-13T00:00:00Z"
+    },
+    {
+      "service": "cxy-booking",
+      "repo": "skt-back/skt_cxy",
+      "environment": "prod",
+      "artifact": "war",
+      "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "commit": "0000000000000000000000000000000000000000",
+      "tag": "P1.2.1",
+      "effectiveAt": "2026-10-13T00:00:00Z"
+    },
+    {
+      "service": "cxy-hotel",
+      "repo": "skt-back-new/skt-back-hotel",
+      "environment": "prod",
+      "artifact": "war",
+      "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "commit": "0000000000000000000000000000000000000000",
+      "tag": "",
+      "effectiveAt": "2026-10-13T00:00:00Z"
+    },
+    {
+      "service": "cxy-ibe",
+      "repo": "skt-front/skt_webview",
+      "environment": "prod",
+      "artifact": "war",
+      "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "commit": "0000000000000000000000000000000000000000",
+      "tag": "P1.3.2",
+      "effectiveAt": "2026-10-13T00:00:00Z"
+    },
+    {
+      "service": "cxy-sms",
+      "repo": "skt-back/skt_project_sms",
+      "environment": "prod",
+      "artifact": "war",
+      "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "commit": "0000000000000000000000000000000000000000",
+      "tag": "P1.0.6",
+      "effectiveAt": "2026-10-13T00:00:00Z"
+    },
+    {
+      "service": "cxy-mq-n",
+      "repo": "skt-back/skt_dpxt_background",
+      "environment": "prod",
+      "artifact": "jar",
+      "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "commit": "0000000000000000000000000000000000000000",
+      "tag": "P1.2.7",
+      "effectiveAt": "2026-10-13T00:00:00Z"
+    },
+    {
+      "service": "cxy-mq-time",
+      "repo": "skt-back/skt_dpxt_background",
+      "environment": "prod",
+      "artifact": "jar",
+      "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "commit": "0000000000000000000000000000000000000000",
+      "tag": "P1.2.7",
+      "effectiveAt": "2026-10-13T00:00:00Z"
+    },
+    {
+      "service": "cxy-remote-aircz",
+      "repo": "skt-remote/skt-remote",
+      "environment": "prod",
+      "artifact": "jar",
+      "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "commit": "0000000000000000000000000000000000000000",
+      "tag": "P1.0.7",
+      "effectiveAt": "2026-10-13T00:00:00Z"
+    },
+    {
+      "service": "cxy-web-timer",
+      "repo": "skt-back/skt_dpxt_background",
+      "environment": "prod",
+      "artifact": "jar",
+      "artifactSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "commit": "0000000000000000000000000000000000000000",
+      "tag": "P1.2.7",
+      "effectiveAt": "2026-10-13T00:00:00Z"
+    }
+  ]
+}

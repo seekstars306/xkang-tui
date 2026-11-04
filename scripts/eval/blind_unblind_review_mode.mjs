@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+const name = process.argv[2] || 'blind-review-mode';
+const scores = JSON.parse(fs.readFileSync('eval_run/' + name + '/scores.json', 'utf8'));
+const key = Object.fromEntries(JSON.parse(fs.readFileSync('eval_run/' + name + '-key/key.json', 'utf8')).map(k => [k.blindId, k]));
+const val = { hit: 1, partial: 0.5, miss: 0 };
+const rows = scores.map(s => { const k = key[s.blindId]; const its = Object.values(s.items || {}); return { ...k, rate: its.reduce((a, v) => a + (val[v] ?? 0), 0) / (its.length || 1), wrongA: (s.wrongClaims || []).filter(w => w.where === 'asserted').length, usable: s.usable, items: s.items, note: s.note }; });
+for (const r of rows.sort((a, b) => (a.ticket + a.arm).localeCompare(b.ticket + b.arm))) console.log([r.ticket, r.arm, 'rate=' + r.rate.toFixed(2), 'use=' + r.usable, 'wrongA=' + r.wrongA, r.fallback ? 'FALLBACK' : '', '|', r.note].join(' '));
+const agg = (f, label) => { const g = {}; for (const r of rows.filter(f)) (g[r.arm] = g[r.arm] || []).push(r); console.log('\n== ' + label); for (const arm of ['off', 'advisory', 'gate']) { const rs = g[arm] || []; if (!rs.length) continue; const m = fn => rs.reduce((a, r) => a + fn(r), 0) / rs.length; console.log(arm.padEnd(9) + ' n=' + rs.length + ' 要点得分=' + m(r => r.rate).toFixed(2) + ' 能直接用=' + m(r => r.usable).toFixed(1) + ' 肯定说错=' + m(r => r.wrongA).toFixed(1)); } };
+agg(r => r.ticket === 'a12c3554', 'a12c3554');
+agg(r => r.ticket !== 'a12c3554', '四个金标准工单');
+agg(() => true, '五单合计');
