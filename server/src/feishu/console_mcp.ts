@@ -25,9 +25,19 @@ export interface McpService {
   description: string;
   /** 客户端应该怎么起（stdio 服务必须由客户端以管道拉起） */
   clientCommand: string;
-  /** 能不能由控制台启动：stdio 服务靠管道和客户端通信，脱离客户端起起来也没人能用 */
+  /** 能不能由控制台启动：支持 --http 模式的才能 */
   startable: boolean;
+  /** HTTP 模式端口（startable 为 true 时有效） */
+  httpPort: number | null;
+  /** HTTP 模式地址（startable 为 true 时有效） */
+  httpUrl: string | null;
 }
+
+/** HTTP 模式端口。stdio 服务只能由客户端拉起；支持 --http 的才能由控制台直接起。 */
+const HTTP_PORTS: Record<string, number> = {
+  'mcp-grafana-logs': 8930,
+};
+const DEFAULT_HTTP_PORT = 8930;
 
 /** 目录名 → 中文名。新增 MCP 服务时在这里补一行，不补就用目录名。 */
 const LABELS: Record<string, string> = {
@@ -55,13 +65,20 @@ export function discoverMcpServices(moduleUrl: string = import.meta.url): McpSer
       transport: detectTransport(entry),
       description: DESCRIPTIONS[name] ?? '',
       clientCommand: 'node ' + path.relative(repoRoot(moduleUrl), entry).replace(/\\/g, '/'),
-      startable: detectTransport(entry) !== 'stdio',
+      httpPort: supportsHttpMode(entry) ? (HTTP_PORTS[name] ?? DEFAULT_HTTP_PORT) : null,
+      startable: supportsHttpMode(entry),
+      httpUrl: supportsHttpMode(entry) ? 'http://127.0.0.1:' + (HTTP_PORTS[name] ?? DEFAULT_HTTP_PORT) + '/mcp' : null,
     });
   }
   return out;
 }
 
-/** 看源码用的是哪种传输：stdio 服务必须由客户端拉起来，控制台只能起"日志模式"的实例 */
+/** 是否支持 --http：源码里出现 StreamableHTTP 传输才算，避免给一个点了没反应的按钮 */
+export function supportsHttpMode(entry: string): boolean {
+  try { return /StreamableHTTPServerTransport/.test(fs.readFileSync(entry, 'utf8')); } catch { return false; }
+}
+
+/** 看源码用的是哪种传输 */
 export function detectTransport(entry: string): McpTransport {
   try {
     const src = fs.readFileSync(entry, 'utf8');
@@ -102,11 +119,8 @@ export function listMcpStatus(moduleUrl: string = import.meta.url, procs?: ProcI
 export interface McpActionResult { ok: boolean; pid?: number; error?: string; logFile?: string }
 
 /**
- * 起一份常驻实例，stdio 重定向到日志文件。
- *
- * 注意：stdio 的 MCP 服务靠 stdin/stdout 和客户端通信，脱离客户端起来之后
- * 没有客户端能附上来——所以这个"启动"的用途是常驻与看日志，不是给客户端用。
- * 界面上会把这句说明白，不让人误以为客户端能连上。
+ * 起一份常驻实例。支持 --http 的服务用 HTTP 模式起（客户端能连 httpUrl，控制台也能管）；
+ * 只支持 stdio 的服务起起来也没有客户端能附上来，界面上不给这个按钮。
  */
 export function startMcpService(name: string, moduleUrl: string = import.meta.url): McpActionResult {
   const service = discoverMcpServices(moduleUrl).find(s => s.name === name);
@@ -117,7 +131,8 @@ export function startMcpService(name: string, moduleUrl: string = import.meta.ur
   fs.mkdirSync(logDir, { recursive: true });
   const logFile = path.join(logDir, 'mcp-' + service.name + '.log');
   try {
-    const child = spawn(process.execPath, [service.entry], {
+    const args = service.httpPort ? [service.entry, '--http', '--port', String(service.httpPort)] : [service.entry];
+    const child = spawn(process.execPath, args, {
       cwd: path.dirname(service.entry),
       env: { ...process.env },
       detached: true,

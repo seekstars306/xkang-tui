@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+import { createServer } from "node:http";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -404,10 +406,46 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
+/**
+ * 启动方式：默认 stdio（客户端以管道拉起，行为和以前完全一致）；
+ * 加 --http（或 MCP_TRANSPORT=http）时改走 Streamable HTTP，监听 127.0.0.1。
+ *
+ * 为什么加 HTTP 模式：stdio 服务必须由客户端当子进程拉起，一旦挂了只能客户端重启，
+ * 服务端控制台看不见也管不了。有了 HTTP 模式，控制台可以直接把它拉起来，
+ * 客户端也可以改成连 http://127.0.0.1:8930/mcp。
+ */
+const DEFAULT_HTTP_PORT = 8930;
+
 async function run() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("Grafana Loki Log MCP Server running with safety guardrails on stdio.");
+  const args = process.argv.slice(2);
+  const httpMode = args.includes("--http") || process.env.MCP_TRANSPORT === "http";
+  if (!httpMode) {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error("Grafana Loki Log MCP Server running with safety guardrails on stdio.");
+    return;
+  }
+  const portFlag = args.indexOf("--port");
+  const port = Number((portFlag >= 0 && args[portFlag + 1]) || process.env.MCP_HTTP_PORT || DEFAULT_HTTP_PORT);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    console.error(`Fatal error: 非法端口 ${port}`);
+    process.exit(1);
+  }
+  // 无状态模式：不在 transport 里保存会话，客户端每次请求自带完整上下文，控制台拉起后谁都能连
+  const httpServer = createServer(async (req, res) => {
+    if (!req.url || !req.url.startsWith("/mcp")) {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("not found");
+      return;
+    }
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    res.on("close", () => { transport.close(); });
+    await server.connect(transport);
+    await transport.handleRequest(req, res);
+  });
+  httpServer.listen(port, "127.0.0.1", () => {
+    console.error(`Grafana Loki Log MCP Server (Streamable HTTP) listening on http://127.0.0.1:${port}/mcp`);
+  });
 }
 
 run().catch((err) => {

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  discoverMcpServices, detectTransport, findMcpProcess, listMcpStatus, mcpStatus, startMcpService, stopMcpService,
+  discoverMcpServices, detectTransport, findMcpProcess, listMcpStatus, mcpStatus, startMcpService, stopMcpService, supportsHttpMode,
 } from '../../server/src/feishu/console_mcp.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
@@ -15,7 +15,9 @@ test('自动发现 tools/ 下的 mcp-* 服务', () => {
   const g = list.find(s => s.name === 'mcp-grafana-logs')!;
   assert.ok(g, '应发现 mcp-grafana-logs');
   assert.equal(g.transport, 'stdio');
-  assert.equal(g.startable, false, 'stdio 服务不能由控制台启动');
+  assert.equal(g.startable, true, 'grafana 日志已支持 --http，控制台可以启动');
+  assert.equal(g.httpPort, 8930);
+  assert.equal(g.httpUrl, 'http://127.0.0.1:8930/mcp');
   assert.ok(g.entry.endsWith('index.mjs'));
   assert.match(g.clientCommand, /^node tools\/mcp-grafana-logs\/index\.mjs$/);
 });
@@ -66,10 +68,21 @@ test('startMcpService：未知服务名直接报错', () => {
   assert.match(r.error!, /没有这个 MCP 服务/);
 });
 
-test('listMcpStatus：返回的每条都带 transport 与 startable', () => {
+test('supportsHttpMode：认 StreamableHTTP 传输，读不到就 false', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xk-mcph-'));
+  try {
+    const yes = path.join(dir, 'yes.mjs');
+    fs.writeFileSync(yes, 'import { StreamableHTTPServerTransport } from "x";');
+    assert.equal(supportsHttpMode(yes), true);
+    assert.equal(supportsHttpMode(path.join(dir, 'nope.mjs')), false);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('listMcpStatus：返回的每条都带 transport / startable / httpUrl', () => {
   for (const s of listMcpStatus()) {
     assert.ok(['stdio', 'http', 'unknown'].includes(s.transport));
     assert.equal(typeof s.startable, 'boolean');
-    assert.equal(s.startable, s.transport !== 'stdio');
+    assert.equal(typeof s.startable, 'boolean');
+  assert.equal(s.startable, /StreamableHTTPServerTransport/.test(fs.readFileSync(s.entry, 'utf8')));
   }
 });

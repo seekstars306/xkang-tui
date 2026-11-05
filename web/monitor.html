@@ -311,11 +311,11 @@ function renderConsole(){
           '</div>' +
           (svc.description ? '<div style="font-size:12px;color:#4e5969;margin-bottom:4px">' + esc(svc.description) + '</div>' : '') +
           '<div style="font-size:11.5px;color:#86909c">入口 ' + esc(svc.entry) + (svc.pid ? ' · PID ' + svc.pid : '') + (svc.startedAt ? ' · 启动于 ' + fmtTime(svc.startedAt) : '') + '</div>' +
-          (svc.transport === 'stdio' ? '<div style="font-size:11.5px;color:#86909c;margin-top:2px">客户端启动命令：<code style="background:#f7f8fa;padding:1px 5px;border-radius:3px">' + esc(svc.clientCommand) + '</code></div>' : '') +
+          (svc.startable ? '<div style="font-size:11.5px;color:#86909c;margin-top:2px">HTTP 地址：<code style="background:#f7f8fa;padding:1px 5px;border-radius:3px">' + esc(svc.httpUrl) + '</code></div>' : '<div style="font-size:11.5px;color:#86909c;margin-top:2px">客户端启动命令：<code style="background:#f7f8fa;padding:1px 5px;border-radius:3px">' + esc(svc.clientCommand) + '</code></div>') +
           '<div class="btnrow">' + btns + '</div>' +
         '</div>';
       }).join('') +
-      '<div style="font-size:11px;color:#86909c;margin-top:8px">MCP 服务通常由使用方（ZCode / DSH）以管道拉起，进程挂在客户端名下；控制台能看到它、停掉它。http 传输的服务才能由控制台直接启动。</div>' +
+      '<div style="font-size:11px;color:#86909c;margin-top:8px">MCP 服务可以由使用方（ZCode / DSH）以管道拉起，也可以由控制台以 HTTP 模式拉起——两种方式看到的进程是同一个，停掉任意一个都会影响另一边。stdio 专用（不支持 HTTP）的只能由客户端拉起。</div>' +
       '</div>';
   })();
 
