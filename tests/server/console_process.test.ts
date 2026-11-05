@@ -1,7 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import net from 'node:net';
 import { listProcesses, findBridge, isRunning, parseProcList, startServerProcess } from '../../server/src/feishu/console_process.ts';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 /** 找一段没人用的端口，用来验证端口被占用时启动函数会拒绝 */
 function freePort(): Promise<number> {
@@ -53,4 +58,10 @@ test('启动服务端：端口已被占用时判定为已在运行，不拉第�
   } finally {
     await new Promise<void>(resolve => blocker.close(() => resolve()));
   }
+});
+test('端口探测不走 shell：不会经 cmd.exe /c，也就不会闪窗口', () => {
+  const src = fs.readFileSync(path.resolve(repoRoot, 'server/src/feishu/console_process.ts'), 'utf8');
+  assert.doesNotMatch(src, /spawnSync\([\s\S]{0,200}?shell:\s*true/, '不能走 shell');
+  assert.match(src, /spawnSync\('netstat', \['-ano'\]/, 'Windows 上应直接调 netstat.exe');
+  assert.match(src, /LISTENING/, '只认 LISTENING 行，别把 TIME_WAIT 当成占用');
 });

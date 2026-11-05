@@ -74,7 +74,9 @@ test('接棒服务检测到脚本更新会自行退出，由服务端重新拉�
   assert.match(src, /mtimeMs/, '应比较脚本 mtime');
   // 不再自己 spawn 接班人：那会和旧进程抢端口，试过一次反而更脆
   assert.doesNotMatch(src, /handOverIfStale/, '不应再自己拉接班人');
-  assert.doesNotMatch(src, /shell: true/, '不能走 shell（会闪 cmd 窗口）');
+  // 注释里会出现 shell: true 这个词，所以只查真实调用：spawnSync(... shell: true ...)
+  assert.doesNotMatch(src, /spawnSync\([\s\S]{0,200}?shell:\s*true/, '不能走 shell（会闪 cmd 窗口）');
+  assert.match(src, /spawnSync\('netstat', \['-ano'\]/, '应直接调 netstat.exe');
 });
 
 test('KEEPER_PORT 默认 8601，可用环境变量覆盖', () => {
