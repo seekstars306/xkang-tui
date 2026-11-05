@@ -56,12 +56,43 @@
   .token-box { padding:16px; max-width:520px; margin:60px auto; background:#fff; border-radius:8px; border:1px solid #e5e6eb; }
   .token-box input { width:100%; padding:9px 11px; border:1px solid #d9dce1; border-radius:4px; font-size:13px; margin:10px 0; }
   .token-box p { color:#86909c; font-size:12.5px; margin:0 0 6px; }
+  .viewtabs { display:flex; gap:4px; background:#f2f3f5; padding:3px; border-radius:6px; }
+  .vtab { padding:5px 12px; border-radius:4px; font-size:13px; color:#4e5969; cursor:pointer; user-select:none; }
+  .vtab:hover { color:#165dff; }
+  .vtab.active { background:#fff; color:#165dff; font-weight:500; box-shadow:0 1px 2px rgba(0,0,0,.06); }
+  .console { flex:1; overflow-y:auto; padding:18px 22px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:14px; margin-bottom:16px; }
+  .card { background:#fff; border:1px solid #e5e6eb; border-radius:8px; padding:14px 16px; }
+  .card h3 { margin:0 0 10px; font-size:13px; font-weight:600; display:flex; align-items:center; gap:8px; }
+  .card .kv { margin-bottom:0; }
+  .btnrow { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+  button.primary { background:#165dff; border-color:#165dff; color:#fff; }
+  button.primary:hover { background:#0e4fd4; color:#fff; }
+  button.danger { color:#f53f3f; border-color:#ffccc7; }
+  button.danger:hover { background:#fff1f0; border-color:#f53f3f; color:#f53f3f; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .pill { font-size:11px; padding:1px 7px; border-radius:10px; font-weight:500; }
+  .pill.up { background:#e8ffea; color:#00b42a; } .pill.down { background:#f2f3f5; color:#86909c; }
+  .pill.warn { background:#fff7e8; color:#ff7d00; } .pill.restart { background:#e8f3ff; color:#165dff; }
+  .notice { border-radius:6px; padding:10px 12px; font-size:12.5px; margin-bottom:12px; }
+  .notice.warn { background:#fff7e8; color:#ad4e00; border:1px solid #ffd8b5; }
+  .notice.err { background:#ffece8; color:#cb2634; border:1px solid #fdcdc5; }
+  .notice.ok { background:#e8ffea; color:#00821d; border:1px solid #b7eb8f; }
+  .cfggroup { margin-bottom:18px; }
+  .cfggroup > h4 { margin:0 0 8px; font-size:12px; color:#86909c; font-weight:600; }
+  .cfgrow { display:grid; grid-template-columns:190px 1fr; gap:10px; align-items:center; padding:5px 0; border-bottom:1px solid #f7f8fa; }
+  .cfgrow label { font-size:12.5px; color:#1f2329; }
+  .cfgrow .hint { display:block; font-size:11px; color:#86909c; margin-top:2px; }
+  .cfgrow input, .cfgrow select { width:100%; padding:5px 8px; border:1px solid #d9dce1; border-radius:4px; font-size:12.5px; font-family:inherit; }
+  .cfgrow input:disabled, .cfgrow select:disabled { background:#f7f8fa; color:#86909c; }
+  .cfgrow .meta { font-size:11px; color:#86909c; }
+  .audit { font-family:ui-monospace,Consolas,monospace; font-size:11.5px; white-space:pre-wrap; word-break:break-all; }
 </style>
 </head>
 <body>
 <div id="app"></div>
 <script>
-const S = { token: localStorage.getItem('feishu_admin_token') || '', stats:null, tasks:[], active:null, detail:null, tab:'input', filter:{ status:'', chatId:'', requester:'' }, chats:[], requesters:[] };
+const S = { token: localStorage.getItem('feishu_admin_token') || '', stats:null, tasks:[], active:null, detail:null, tab:'input', filter:{ status:'', chatId:'', requester:'' }, chats:[], requesters:[], view:'tasks', console:null, consoleErr:'', saving:false, saved:'' };
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -109,6 +140,10 @@ function render(){
         <span><i class="dot done"></i>今日完成 <b>${st.todayDone}</b></span>
         <span>累计 <b>${st.total}</b></span>
       </div>
+      <div class="viewtabs">
+        <span class="vtab ${S.view==='tasks'?'active':''}" data-view="tasks">任务监控</span>
+        <span class="vtab ${S.view==='console'?'active':''}" data-view="console">服务端控制台</span>
+      </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <span style="font-size:12px;color:#86909c" id="whoami"></span>
         <button id="refresh">刷新</button>
@@ -116,6 +151,7 @@ function render(){
       </div>
     </header>
     <main>
+      ${S.view==='console' ? renderConsole() : `
       <aside>
         <h3>状态</h3>
         <div class="filter-item ${!S.filter.status?'active':''}" data-f="status" data-v="">全部 <span>${S.tasks.length}</span></div>
@@ -139,12 +175,15 @@ function render(){
           </div>`).join('') : '<div class="empty">还没有任务。在群里 @ 机器人试试。</div>'}
       </div>
       <div class="detail">${renderDetail()}</div>
+      `}
     </main>`;
 
   document.querySelectorAll('.filter-item').forEach(el => el.onclick = () => {
     S.filter[el.dataset.f] = el.dataset.v; render();
   });
   document.querySelectorAll('.task').forEach(el => el.onclick = () => openTask(el.dataset.id));
+  document.querySelectorAll('.vtab').forEach(el => el.onclick = () => { S.view = el.dataset.view; if (S.view==='console') loadConsole(); render(); });
+  bindConsole();
   const rb = $('#refresh'); if (rb) rb.onclick = load;
   const lb = $('#logout');
   if (lb) lb.onclick = async () => {
@@ -153,6 +192,190 @@ function render(){
   };
   document.querySelectorAll('.tab').forEach(el => el.onclick = () => { S.tab = el.dataset.tab; render(); });
   const copy = $('#copyInput'); if (copy) copy.onclick = () => { navigator.clipboard.writeText(S.detail?.task?.inputText || ''); copy.textContent='已复制'; };
+}
+
+
+/* ---------------- 服务端控制台 ---------------- */
+
+async function loadConsole(){
+  try {
+    const [status, config] = await Promise.all([api('/console/status'), api('/console/config')]);
+    S.console = { status, config }; S.consoleErr = '';
+  } catch (e) { S.consoleErr = String(e.message || e); }
+  render();
+}
+
+function fmtUptime(sec){
+  if (sec == null) return '—';
+  const d = Math.floor(sec/86400), h = Math.floor(sec%86400/3600), m = Math.floor(sec%3600/60), s2 = sec%60;
+  return (d? d+'天':'') + (h? h+'小时':'') + (m? m+'分':'') + s2 + '秒';
+}
+
+function restartStateText(state){
+  return ({ waiting:'等待旧服务端退出', started:'新服务端已启动', failed:'重启失败', scheduled:'已安排重启' })[state] || state || '—';
+}
+
+function renderConsole(){
+  const c = S.console;
+  if (S.consoleErr) return '<div class="console"><div class="notice err">控制台数据加载失败：' + esc(S.consoleErr) + '</div></div>';
+  if (!c) return '<div class="console"><div class="empty">正在加载控制台…</div></div>';
+  const s = c.status.server, b = c.status.bridge, inflight = c.status.inFlight || [];
+  const rs = c.status.restart;
+
+  const serverCard =
+    '<div class="card">' +
+      '<h3>xkang 服务端 <span class="pill up">运行中</span></h3>' +
+      '<dl class="kv">' +
+        '<dt>进程</dt><dd>PID ' + s.pid + ' · ' + esc(s.platform) + ' · Node ' + esc(s.node) + '</dd>' +
+        '<dt>已运行</dt><dd>' + fmtUptime(s.uptimeSeconds) + '</dd>' +
+        '<dt>工作目录</dt><dd>' + esc(s.cwd) + '</dd>' +
+        '<dt>监听</dt><dd>' + esc(String(s.port)) + '</dd>' +
+        '<dt>复核模式</dt><dd><span class="pill ' + (s.reviewMode==='off'?'down':'warn') + '">' + esc(s.reviewMode) + '</span></dd>' +
+        '<dt>推理档位</dt><dd>' + esc(s.reasoningEffort) + '</dd>' +
+        '<dt>上下文阈值</dt><dd>' + esc(String(s.contextTokens)) + '</dd>' +
+        '<dt>代码库路径</dt><dd>' + esc(s.codeRepoPath) + '</dd>' +
+        '<dt>调度模型</dt><dd>' + esc(s.activeModel) + '</dd>' +
+      '</dl>' +
+      '<div class="btnrow"><button class="danger" id="btnServerRestart">重启服务端</button></div>' +
+      '<div style="font-size:11px;color:#86909c;margin-top:8px">重启会中断所有在途排查；有任务时接口会先拒绝。重启由脱离进程的接棒脚本完成，进展见下方状态。</div>' +
+    '</div>';
+
+  const bridgeCard =
+    '<div class="card">' +
+      '<h3>飞书桥 <span class="pill ' + (b.running?'up':'down') + '">' + (b.running?'运行中':'未运行') + '</span></h3>' +
+      '<dl class="kv">' +
+        '<dt>进程</dt><dd>' + (b.pid ? 'PID ' + b.pid : '—') + '</dd>' +
+        '<dt>启动时间</dt><dd>' + fmtTime(b.startedAt) + '</dd>' +
+      '</dl>' +
+      '<div class="btnrow">' + (b.running
+        ? '<button id="btnBridgeRestart">重启飞书桥</button><button class="danger" id="btnBridgeStop">停止飞书桥</button>'
+        : '<button class="primary" id="btnBridgeStart">启动飞书桥</button>') + '</div>' +
+      '<div style="font-size:11px;color:#86909c;margin-top:8px">停止飞书桥不影响服务端与监控台，但群里 @ 不会得到响应。</div>' +
+    '</div>';
+
+  const inflightCard =
+    '<div class="card">' +
+      '<h3>在途排查 <span class="pill ' + (inflight.length?'warn':'down') + '">' + inflight.length + '</span></h3>' +
+      (inflight.length
+        ? '<div class="notice warn">有 ' + inflight.length + ' 个排查正在进行。重启服务端或停止飞书桥会中断它们，接口默认拒绝，确认后才能继续。</div>'
+        : '<div style="font-size:12.5px;color:#86909c">当前没有进行中的排查。</div>') +
+      (inflight.length ? inflight.map(t => '<div style="font-size:12px;padding:4px 0;border-bottom:1px solid #f7f8fa">'
+        + '<span class="badge ' + esc(t.status) + '">' + esc(t.status) + '</span> ' + esc(t.chatName || t.id) + ' · ' + esc(t.preview || '') + '</div>').join('') : '') +
+    '</div>';
+
+  const restartCard =
+    '<div class="card"><h3>重启状态</h3>' +
+      (rs
+        ? '<dl class="kv">'
+          + '<dt>状态</dt><dd><span class="pill ' + (rs.state==='started'?'up':rs.state==='failed'?'warn':'restart') + '">' + esc(restartStateText(rs.state)) + '</span></dd>'
+          + '<dt>时间</dt><dd>' + fmtTime(rs.at) + '</dd>'
+          + (rs.pid ? '<dt>新进程</dt><dd>PID ' + esc(String(rs.pid)) + '</dd>' : '')
+          + (rs.command ? '<dt>命令</dt><dd>' + esc(rs.command) + '</dd>' : '')
+          + (rs.error ? '<dt style="color:#f53f3f">错误</dt><dd style="color:#f53f3f">' + esc(rs.error) + '</dd>' : '')
+          + '</dl>'
+        : '<div style="font-size:12.5px;color:#86909c">还没有从控制台发起过重启。</div>') +
+      '<div class="btnrow"><button id="btnRefreshStatus">刷新状态</button></div>' +
+    '</div>';
+
+  return '<div class="console">'
+    + (S.saved ? '<div class="notice ok">配置已保存：' + esc(S.saved) + '。标记为"需重启"的项目要重启服务端后才生效。</div>' : '')
+    + '<div class="cards">' + serverCard + bridgeCard + inflightCard + restartCard + '</div>'
+    + renderConfigForm(c.config)
+    + '</div>';
+}
+
+function renderConfigForm(config){
+  if (!config) return '<div class="notice err">配置未加载。</div>';
+  const byGroup = {};
+  for (const f of config.fields) { (byGroup[f.group] = byGroup[f.group] || []).push(f); }
+  const groups = config.groups || Object.keys(byGroup);
+  let html = '<div class="card"><h3>配置项 <span style="font-weight:400;color:#86909c;font-size:11px">' + esc(config.envFile) + '</span></h3>';
+  html += '<div class="notice warn">密钥类只显示"是否已配置"，不回显内容；修改后需重启的项会标注。保存前会自动备份原文件。</div>';
+  for (const g of groups) {
+    html += '<div class="cfggroup"><h4>' + esc(g) + '</h4>';
+    for (const f of (byGroup[g] || [])) {
+      const id = 'cfg_' + f.key;
+      let control;
+      if (f.readOnly) {
+        control = '<input value="' + (f.kind === 'secret' ? (f.present ? '已配置（' + f.secretLength + ' 字符）' : '未配置') : esc(f.value)) + '" disabled>';
+      } else if (f.kind === 'secret') {
+        control = '<input type="password" id="' + id + '" placeholder="' + (f.present ? '已配置（' + f.secretLength + ' 字符），留空表示保持不变' : '未配置，填写后保存') + '" autocomplete="new-password">';
+      } else if (f.kind === 'boolean') {
+        const cur = f.value === '' ? '' : (/^(1|true)$/i.test(f.value) ? 'true' : 'false');
+        control = '<select id="' + id + '"><option value="">（不设置）</option><option value="true"' + (cur==='true'?' selected':'') + '>true</option><option value="false"' + (cur==='false'?' selected':'') + '>false</option></select>';
+      } else if (f.kind === 'enum') {
+        control = '<select id="' + id + '"><option value="">（不设置）</option>' + (f.options||[]).map(o => '<option value="' + esc(o) + '"' + (f.value===o?' selected':'') + '>' + (o===''?'（空）':esc(o)) + '</option>').join('') + '</select>';
+      } else {
+        control = '<input id="' + id + '" value="' + esc(f.value) + '"' + (f.kind==='number'?' type="number"':'') + ' placeholder="（不设置）">';
+      }
+      html += '<div class="cfgrow"><label for="' + id + '">' + esc(f.label)
+        + (f.restartRequired ? ' <span class="pill restart">需重启</span>' : '')
+        + (f.hint ? '<span class="hint">' + esc(f.hint) + '</span>' : '')
+        + '</label><div>' + control + '</div></div>';
+    }
+    html += '</div>';
+  }
+  html += '<div class="btnrow"><button class="primary" id="btnSaveConfig"' + (S.saving?' disabled':'') + '>' + (S.saving?'保存中…':'保存配置') + '</button></div>';
+  html += '</div>';
+  return html;
+}
+
+function bindConsole(){
+  const on = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
+  on('btnBridgeStart', () => bridgeAction('start'));
+  on('btnBridgeStop', () => bridgeAction('stop'));
+  on('btnBridgeRestart', () => bridgeAction('restart'));
+  on('btnRefreshStatus', () => loadConsole());
+  on('btnServerRestart', async () => {
+    const c = S.console && S.console.status;
+    const n = (c && c.inFlight || []).length;
+    const msg = n > 0
+      ? '当前有 ' + n + ' 个排查正在进行，重启会中断它们。确定仍要重启服务端？'
+      : '确定重启 xkang 服务端？重启期间群里 @ 不会得到响应，页面会自动重连。';
+    if (!confirm(msg)) return;
+    if (n > 0 && !confirm('再次确认：这 ' + n + ' 个进行中的排查会被中断，结果记为失败。继续？')) return;
+    try {
+      const r = await fetch('/admin/feishu/console/server/restart', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ force: n > 0 }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(j.error || ('HTTP ' + r.status)); return; }
+      alert('重启已安排，服务端即将退出。页面会在 5 秒后自动刷新。');
+      setTimeout(() => location.reload(), 5000);
+    } catch (e) { alert('请求失败：' + e.message); }
+  });
+  on('btnSaveConfig', saveConfig);
+}
+
+async function bridgeAction(action){
+  try {
+    const r = await fetch('/admin/feishu/console/bridge/' + action, { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({}) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { alert(j.error || ('HTTP ' + r.status)); return; }
+    await loadConsole();
+  } catch (e) { alert('请求失败：' + e.message); }
+}
+
+async function saveConfig(){
+  const c = S.console && S.console.config;
+  if (!c) return;
+  const changes = [];
+  for (const f of c.fields) {
+    if (f.readOnly) continue;
+    const el = document.getElementById('cfg_' + f.key);
+    if (!el) continue;
+    const v = el.value;
+    if (f.kind === 'secret') { if (v === '') continue; changes.push({ key: f.key, value: v }); continue; }
+    const original = f.present ? f.value : '';
+    if (v !== original) changes.push({ key: f.key, value: v });
+  }
+  if (!changes.length) { alert('没有改动'); return; }
+  S.saving = true; render();
+  try {
+    const r = await fetch('/admin/feishu/console/config', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ changes }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { alert(j.error || ('HTTP ' + r.status)); S.saving = false; render(); return; }
+    S.saved = (j.updated || []).concat(j.added || []).join('、');
+    await loadConsole();
+  } catch (e) { alert('保存失败：' + e.message); S.saving = false; render(); }
 }
 
 function renderDetail(){

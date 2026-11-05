@@ -21,6 +21,7 @@ import { AgentService } from './agent/service.js';
 import { mountAgentRoutes } from './agent/routes.js';
 import { fileOutputDir, signFileToken, verifyFileToken } from './tools/file_write.js';
 import { mountFeishuMonitor } from './feishu/monitor_routes.js';
+import { mountFeishuConsole } from './feishu/console_routes.js';
 import { mountShareRoutes } from './feishu/share.js';
 import { reviewMode } from './agent/review_mode.js';
 import { answerGuide } from './agent/answer_guide.js';
@@ -128,6 +129,12 @@ export function startServer() {
   mountFeishuMonitor(app, {
     accounts: config.monitorAccounts,
     sessionSecret: config.monitorSessionSecret,
+  });
+  // 服务端控制台：与监控台同页、同一套登录态；启停与配置编辑都在这里
+  mountFeishuConsole(app, {
+    accounts: config.monitorAccounts,
+    sessionSecret: config.monitorSessionSecret,
+    config,
   });
   // 结论分享页：链接本身是凭据，只返回已脱敏的答案快照
   mountShareRoutes(app);

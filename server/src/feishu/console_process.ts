@@ -1,0 +1,206 @@
+import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * 控制台的进程探测与启停。
+ *
+ * 为什么值得单独一个模块：这些都是"会真的影响线上"的动作，
+ * 必须能和纯逻辑分开单测、分开审查。两条硬规则：
+ *   1. 任何停止/重启动作都要能被审计（谁、什么时候、影响了哪些 pid）；
+ *   2. 重启服务端用"脱离父进程的 relauncher"——直接在自己的进程里 spawn 再 exit，
+ *      子进程会跟着一起死，服务端就起不回来了。
+ */
+
+/**
+ * CIM 的 CreationDate 形如 20261104151505.123456+480，new Date() 解析不了（会得到 Invalid Date，
+ * 再 toISOString() 直接抛 RangeError，把整个 status 接口打挂）。按前 14 位自己拼。
+ */
+function parseCimDate(raw: unknown): string | null {
+  // 既吃 CIM 原始格式 20261104151505.123456+480，也吃预先格式化过的 2026-11-05T11:01:59
+  const digits = String(raw ?? '').replace(/\D/g, '');
+  const m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/.exec(digits);
+  if (!m) return null;
+  const d = new Date(m[1] + '-' + m[2] + '-' + m[3] + 'T' + m[4] + ':' + m[5] + ':' + m[6]);
+  return Number.isFinite(d.getTime()) ? d.toISOString() : null;
+}
+
+export interface ProcInfo {
+  pid: number;
+  ppid: number;
+  commandLine: string;
+  startedAt: string | null;
+}
+
+const IS_WIN = process.platform === 'win32';
+
+/** 当前节点进程列表。Windows 走 CIM，其它平台走 ps；取不到就返回空数组，由调用方决定报错。 */
+export function listProcesses(): ProcInfo[] {
+  if (IS_WIN) {
+    const ps = spawnSync('powershell', [
+      '-NoProfile', '-NonInteractive', '-Command',
+      "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' } | Select-Object ProcessId,ParentProcessId,CommandLine,@{n='StartedAt';e={$_.CreationDate.ToString('yyyy-MM-ddTHH:mm:ss')}} | ConvertTo-Json -Compress",
+    ], { encoding: 'utf8', timeout: 15000, windowsHide: true });
+    if (ps.status !== 0 || !ps.stdout) return [];
+    let parsed: any;
+    try { parsed = JSON.parse(ps.stdout.trim() || '[]'); } catch { return []; }
+    const rows = Array.isArray(parsed) ? parsed : [parsed];
+    return rows.filter(r => r && typeof r.ProcessId === 'number').map(r => ({
+      pid: r.ProcessId,
+      ppid: Number(r.ParentProcessId ?? 0),
+      commandLine: String(r.CommandLine ?? ''),
+      startedAt: parseCimDate(r.StartedAt),
+    }));
+  }
+  const ps = spawnSync('ps', ['-eo', 'pid=,ppid=,lstart=,args='], { encoding: 'utf8', timeout: 15000 });
+  if (ps.status !== 0 || !ps.stdout) return [];
+  return ps.stdout.split('\n').map(line => {
+    const m = /^\s*(\d+)\s+(\d+)\s+(.+?)\s{2,}(.*)$/.exec(line);
+    if (!m) return null;
+    return { pid: Number(m[1]), ppid: Number(m[2]), commandLine: m[4], startedAt: null } as ProcInfo;
+  }).filter((x): x is ProcInfo => x !== null);
+}
+
+const BRIDGE_MARK = /feishu[\\/]main\.(ts|js)/;
+const SERVER_MARK = /(^|[\\/])src[\\/]index\.(ts|js)|dist[\\/]index\.js/;
+
+export function findBridge(): ProcInfo | null {
+  return listProcesses().find(p => BRIDGE_MARK.test(p.commandLine) && !/relaunch/.test(p.commandLine)) ?? null;
+}
+
+/** 服务端进程：包含自己 */
+export function findServerProcesses(): ProcInfo[] {
+  return listProcesses().filter(p => SERVER_MARK.test(p.commandLine) && !/relaunch/.test(p.commandLine));
+}
+
+export function isRunning(info: ProcInfo | null): boolean {
+  if (!info) return false;
+  try { process.kill(info.pid, 0); return true; } catch { return false; }
+}
+
+/** 按进程树结束；Windows 用 taskkill /T，其它平台先 SIGTERM 再升级 */
+export function terminate(pid: number): { ok: boolean; error?: string } {
+  if (IS_WIN) {
+    const r = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { encoding: 'utf8', timeout: 15000, windowsHide: true });
+    return r.status === 0 ? { ok: true } : { ok: false, error: (r.stderr || r.stdout || 'taskkill 失败').trim() };
+  }
+  try { process.kill(pid, 'SIGTERM'); } catch (e) { return { ok: false, error: (e as Error).message }; }
+  return { ok: true };
+}
+
+/** 仓库根目录：本文件在 server/src/feishu 下，要上三级才到仓库根 */
+export function repoRoot(moduleUrl: string = import.meta.url): string {
+  return path.resolve(path.dirname(fileURLToPath(moduleUrl)), '../../..');
+}
+
+export interface StartBridgeResult { ok: boolean; pid?: number; error?: string; logFile?: string }
+
+/**
+ * 启动飞书桥。脱离父进程 + stdio 落到文件：
+ * 服务端重启时不应该把桥一起带走，而桥的日志也不能因为服务端被 kill 就消失。
+ */
+export function startBridge(moduleUrl: string = import.meta.url): StartBridgeResult {
+  const root = repoRoot(moduleUrl);
+  const entry = path.join(root, 'server/src/feishu/main.ts');
+  if (!fs.existsSync(entry)) return { ok: false, error: '找不到飞书桥入口：' + entry };
+  const logDir = path.join(root, 'server/data/diagnostics');
+  fs.mkdirSync(logDir, { recursive: true });
+  const logFile = path.join(logDir, 'bridge-from-console.log');
+  const env = { ...process.env, XKANG_BASE_URL: process.env.XKANG_BASE_URL || 'http://127.0.0.1:8600' };
+  let out: number;
+  try {
+    const child = spawn(process.execPath, ['--import', 'tsx', entry], {
+      cwd: root,
+      env,
+      detached: true,
+      stdio: ['ignore', fs.openSync(logFile, 'a'), fs.openSync(logFile, 'a')],
+      windowsHide: true,
+    });
+    child.unref();
+    out = child.pid ?? 0;
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+  if (!out) return { ok: false, error: '启动飞书桥失败：拿不到子进程 PID' };
+  return { ok: true, pid: out, logFile };
+}
+
+/** relauncher 脚本路径（纯 .mjs：不依赖 tsx 也能跑，服务端起不来时多一条活路） */
+export function relauncherPath(moduleUrl: string = import.meta.url): string {
+  return path.join(path.dirname(fileURLToPath(moduleUrl)), 'relaunch_server.mjs');
+}
+
+export interface RestartPlan {
+  ok: boolean;
+  error?: string;
+  relauncherPid?: number;
+  statusFile?: string;
+  logFile?: string;
+  command: string;
+}
+
+/**
+ * 安排一次服务端重启：先拉起脱离的 relauncher，由它等当前进程退出后再把服务端拉起来。
+ * 返回后调用方应尽快 exit；relauncher 的进展写在 statusFile 里，控制台可轮询。
+ */
+export function planServerRestart(moduleUrl: string = import.meta.url, extra: { waitMs?: number } = {}): RestartPlan {
+  const root = repoRoot(moduleUrl);
+  const serverDir = path.join(root, 'server');
+  const logDir = path.join(serverDir, 'data/diagnostics');
+  fs.mkdirSync(logDir, { recursive: true });
+  const logFile = path.join(logDir, 'restart-from-console.log');
+  const statusFile = path.join(logDir, 'restart-status.json');
+  const script = relauncherPath(moduleUrl);
+  if (!fs.existsSync(script)) return { ok: false, error: '找不到 relauncher 脚本：' + script, command: '' };
+  const waitMs = extra.waitMs ?? 15000;
+  const args = [
+    script,
+    '--parent-pid', String(process.pid),
+    '--cwd', serverDir,
+    '--entry', 'src/index.ts',
+    '--log', logFile,
+    '--status', statusFile,
+    '--wait-ms', String(waitMs),
+  ];
+  try {
+    fs.writeFileSync(statusFile, JSON.stringify({ state: 'scheduled', at: new Date().toISOString(), parentPid: process.pid }, null, 2));
+    const child = spawn(process.execPath, args, {
+      cwd: serverDir,
+      env: { ...process.env },
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    child.unref();
+    if (!child.pid) return { ok: false, error: ' relauncher 启动失败', command: '' };
+    return {
+      ok: true,
+      relauncherPid: child.pid,
+      statusFile,
+      logFile,
+      command: `node --import tsx src/index.ts（cwd=${serverDir}）`,
+    };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message, command: '' };
+  }
+}
+
+export interface AuditEntry {
+  at: string;
+  actor: string;
+  action: string;
+  detail: Record<string, unknown>;
+}
+
+/** 控制台动作审计：JSONL 追加，写不进去也不阻断动作本身（但要把真实原因报出来） */
+export function appendAudit(moduleUrl: string, entry: AuditEntry): { ok: boolean; error?: string } {
+  const file = path.join(repoRoot(moduleUrl), 'server/data/diagnostics/console-actions.jsonl');
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.appendFileSync(file, JSON.stringify(entry) + '\n', 'utf8');
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
