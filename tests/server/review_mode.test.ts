@@ -6,49 +6,101 @@ import { loadServerConfig } from '../../server/src/config.ts';
 import { reviewMode, validateReviewMode } from '../../server/src/agent/review_mode.ts';
 import { advisoryAnswer, draftFields, parseDraft, reviewIssueItems, ADVISORY_ISSUE_LIMIT } from '../../server/src/agent/draft_publication.ts';
 import { unavailableAnswer } from '../../server/src/agent/publication.ts';
-import { DRAFT_1, DRAFT_2, REJECTED, runScenario, SCENARIOS, withEnv, type DraftText, type ScenarioName, type ScenarioRun } from '../helpers/review_mode_fixture.ts';
+import { DRAFT_1, DRAFT_2, REJECTED, digestsOf, runScenario, SCENARIOS, withEnv, type DraftText, type ScenarioName, type ScenarioRun } from '../helpers/review_mode_fixture.ts';
+import { EXPORT_GUIDE } from '../../server/src/agent/tool_scope.ts';
 
 // 复核模式开关 REVIEW_MODE（server/src/agent/review_mode.ts）的防倒退测试。
 // 全部走真实拼装链路 AgentService.start → AgentCore → reviewAnswer → 最终解析与发布（夹具见 tests/helpers/review_mode_fixture.ts），
 // 所以 service 里"advisory 传 publishLastDraft""off 不传 review"任何一处接线被删，这里都会变红。
 
 /**
- * gate 的 golden：由改动前（HEAD 4d733a1）的代码对 SCENARIOS 同一组输入实际生成（REVIEW_MODE 未设置）。
+ * gate 的 golden：对 SCENARIOS 同一组输入实际生成（REVIEW_MODE 未设置）。
  * 四部分分别是：发给排查模型的全部请求、发给复核模型的全部请求、公开事件、公开答案（随机编号与时间戳已归一，见 digestsOf）。
- * 有意改动提示词、复核或发布逻辑时，在改动前的提交上用同一输入重新生成，不要直接抄改动后的值。
+ *
+ * 2026-11-05：系统提示里加入了【导出规程】（EXPORT_GUIDE，service.ts 的 buildPrompt 末尾追加），
+ * 只有 main（发给排查模型的请求）随之变长，reviews / events / answer 三部分不变。
+ * 本次按当前代码重新生成 main，并用下面的 GOLDEN_BEFORE_EXPORT_GUIDE 与
+ * 「把导出规程从系统提示里删掉后必须回到旧快照」这条断言把差异锁死在这一段上：
+ * 以后提示词再有别的改动，那条断言会红，而不是被这次更新悄悄吞掉。
  */
 const GOLDEN: Record<ScenarioName, { main: string; reviews: string; events: string; answer: string }> = {
   rejectTwice: {
-    main: '21950:288f0f02b96d0bb2182cf38955dab272969bdbe4b890b1ac6fc9a61d4ba16c45',
+    main: '22823:51b611022022c477ce3ff456f47582ec59b12034ad546485e0a01153f419589f',
     reviews: '14175:1fad10e01f1de6df784cb3aa86a37297822ec7062536b059eb597abe72679abc',
     events: '520:5185bff9fff07b6c4e06d56f2ad281c586c34288d8c6b100331ac0ab23e50ecd',
     answer: '338:6aff260a77240ceb131ca274e3e97aff8106fd8cb3a73666fd199f42cd75ebde',
   },
   rejectTwicePartial: {
-    main: '21982:6a6a38aef188979836ff1eb48817b7348d644706c93132a22597ef6a2b1394ee',
+    main: '22855:8bceedd018c1552bcd6187a6b415d7fe180d22a521d347e24d03b4b1f45f8a22',
     reviews: '14175:1fad10e01f1de6df784cb3aa86a37297822ec7062536b059eb597abe72679abc',
     events: '1213:eac7970bd0e6de54965dc7577b4fc3cc5d2bae45747112d57fc6970d2e3ea1e0',
     answer: '1031:cec6bf01af08ae2085e35429728ac09889e2f7e423340a79a72737b812accb6a',
   },
   pass: {
-    main: '13529:c322366f59a3db3758e8a0a4785097c5e8ae85ad1502521e47c01a28d575ed31',
+    main: '14111:572f3b7dfcbd44fa0edaa2e821f8bdb2315149bd58369419c014e0177d7afead',
     reviews: '6962:d6bfc232bfcb7b69bc6d0ad80dee4d66d10b077891618d836b9a7e6e38580308',
     events: '525:45dfe4c9c538c0f621930df26ff26e94209a7b134558e46f7c3b808d3e732b0c',
     answer: '382:431b5235a5aeaed6e032726604ec4f0f66f3759cc5a96bc0efbf3e42949abf23',
   },
   reviewDown: {
-    main: '13529:c322366f59a3db3758e8a0a4785097c5e8ae85ad1502521e47c01a28d575ed31',
+    main: '14111:572f3b7dfcbd44fa0edaa2e821f8bdb2315149bd58369419c014e0177d7afead',
     reviews: '2829:98f80ca5f54b8b6bdf593498c5b9bb3547cd6d5ca539ab1c7c7a9d5904145406',
     events: '341:1039dc3d82e2617512f221482a08ce67c53758213b50fb7b7cd65a017f494120',
     answer: '198:5c1f9a4d38c3a2f2f92bbaa90f5be6176ae7bf1d1d8c3da115a8993a91968b6d',
   },
   reviewThrows: {
-    main: '13529:c322366f59a3db3758e8a0a4785097c5e8ae85ad1502521e47c01a28d575ed31',
+    main: '14111:572f3b7dfcbd44fa0edaa2e821f8bdb2315149bd58369419c014e0177d7afead',
     reviews: '2:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
     events: '341:1039dc3d82e2617512f221482a08ce67c53758213b50fb7b7cd65a017f494120',
     answer: '198:5c1f9a4d38c3a2f2f92bbaa90f5be6176ae7bf1d1d8c3da115a8993a91968b6d',
   },
 };
+/**
+ * 加入【导出规程】之前的 main 快照（2026-11-05 生成，只有 main 与现在不同）。
+ * 存在这里的唯一目的：把"这次 golden 为什么变"锁死在这一段提示上——
+ * 把导出规程从系统提示里删掉后，main 必须逐字节回到这些值。
+ * 以后提示词再有别的改动，下面那条断言会红，而不是被这次更新悄悄吞掉。
+ */
+const GOLDEN_BEFORE_EXPORT_GUIDE: Record<ScenarioName, string> = {
+  rejectTwice: '21950:288f0f02b96d0bb2182cf38955dab272969bdbe4b890b1ac6fc9a61d4ba16c45',
+  rejectTwicePartial: '21982:6a6a38aef188979836ff1eb48817b7348d644706c93132a22597ef6a2b1394ee',
+  pass: '13529:c322366f59a3db3758e8a0a4785097c5e8ae85ad1502521e47c01a28d575ed31',
+  reviewDown: '13529:c322366f59a3db3758e8a0a4785097c5e8ae85ad1502521e47c01a28d575ed31',
+  reviewThrows: '13529:c322366f59a3db3758e8a0a4785097c5e8ae85ad1502521e47c01a28d575ed31',
+};
+
+/** 系统提示末尾追加的那一段（service.ts 的 buildPrompt：... + PROJECT_MAP_PROMPT + '\\n\\n' + EXPORT_GUIDE） */
+const GUIDE_SUFFIX = '\n\n' + EXPORT_GUIDE;
+
+/** 只把系统提示末尾的导出规程去掉，其它字节不动 */
+function withoutExportGuide(main: ScenarioRun['main']): ScenarioRun['main'] {
+  const copy = structuredClone(main);
+  for (const request of copy) {
+    for (const message of request.messages) {
+      if (message.role === 'system' && typeof message.content === 'string' && message.content.endsWith(GUIDE_SUFFIX)) {
+        message.content = message.content.slice(0, -GUIDE_SUFFIX.length);
+      }
+    }
+  }
+  return copy;
+}
+
+test('系统提示只多了导出规程：删掉它之后必须回到加入它之前的快照', async () => {
+  for (const name of NAMES) {
+    const run = await runScenario(undefined, SCENARIOS[name]);
+    const systems = run.main
+      .flatMap(request => request.messages)
+      .filter(message => message.role === 'system' && typeof message.content === 'string');
+    assert.ok(systems.length > 0, `${name}: 应存在系统提示`);
+    for (const message of systems) {
+      const content = message.content as string;
+      assert.ok(content.endsWith(GUIDE_SUFFIX), `${name}: 系统提示末尾应是导出规程`);
+      assert.equal(content.split(EXPORT_GUIDE).length - 1, 1, `${name}: 导出规程只应出现一次`);
+    }
+    const stripped = digestsOf({ main: withoutExportGuide(run.main), reviews: run.reviews, events: run.events, answer: run.answer }).main;
+    assert.equal(stripped, GOLDEN_BEFORE_EXPORT_GUIDE[name], `${name}: 去掉导出规程后应与加入它之前的快照逐字节一致`);
+  }
+});
 const NAMES = Object.keys(SCENARIOS) as ScenarioName[];
 const UNAVAILABLE_CONCLUSION = unavailableAnswer('t').conclusion;
 /** 事件的形状（不含答案内容）：复核照常跑时，advisory 的进度事件与 gate 一致 */
