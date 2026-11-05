@@ -41,14 +41,15 @@ test('parseProcList：空输出、非 JSON、单对象、数组都能吃下来',
   assert.deepEqual(many.map(p => p.pid), [5, 6]);
 });
 
-test('启动服务端：端口被占用时明确拒绝，不重复拉进程', async () => {
+test('启动服务端：端口已被占用时判定为已在运行，不拉第二份', async () => {
   const port = await freePort();
   const blocker = net.createServer();
   await new Promise<void>(resolve => blocker.listen(port, '127.0.0.1', resolve));
   try {
     const r = startServerProcess(undefined, port, 300);
-    assert.equal(r.ok, false);
-    assert.match(r.error!, /仍被占用/);
+    assert.equal(r.ok, true, '已在运行不应报错');
+    assert.equal((r as any).already, true);
+    assert.equal(r.pid, undefined, '不应声称拉起了新进程');
   } finally {
     await new Promise<void>(resolve => blocker.close(() => resolve()));
   }

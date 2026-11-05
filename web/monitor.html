@@ -377,7 +377,10 @@ async function serverAction(action){
     const r = await fetch('/admin/feishu/console/server/' + action, { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({}) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { alert(j.error || ('HTTP ' + r.status)); return; }
-    if (action === 'start') { S.serverStopped = false; await loadConsole(); }
+    if (action === 'start') {
+      if (j.already) { S.serverStopped = false; await loadConsole(); alert('服务端已经在运行。'); return; }
+      S.serverStopped = false; await loadConsole();
+    }
     return;
   } catch (e) {
     if (action !== 'start') { alert('请求失败：' + e.message); return; }

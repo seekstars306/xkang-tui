@@ -139,7 +139,7 @@ export function mountFeishuConsole(app: Express, options: ConsoleOptions): void 
         if (isRunning(current)) { res.json({ ok: true, already: true, pid: current!.pid }); return; }
         const r = startBridge(import.meta.url);
         appendAudit(import.meta.url, { at: new Date().toISOString(), actor: who, action: 'bridge.start', detail: { ok: r.ok, pid: r.pid, error: r.error } });
-        res.json(r.ok ? { ok: true, pid: r.pid, logFile: r.logFile } : { ok: false, error: r.error });
+        res.json(r.ok ? { ok: true, already: (r as any).already === true, pid: r.pid, logFile: r.logFile } : { ok: false, error: r.error });
         return;
       }
       if (!isRunning(current)) {

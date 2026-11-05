@@ -38,7 +38,9 @@ const log = (line) => {
  * 本地端口同样是 8600，会把已经退了误判成还在跑。
  */
 const listening = (port) => {
-  const r = spawnSync('netstat -ano', { shell: true, encoding: 'utf8', timeout: 8000, windowsHide: true });
+  // 不走 shell：{ shell: true } 会经 cmd.exe /c，父进程无控制台时 Windows 新开控制台，
+  // 屏幕上就是疯狂闪 cmd 窗口。直接调 netstat.exe 不会。
+  const r = spawnSync('netstat', ['-ano'], { encoding: 'utf8', timeout: 8000, windowsHide: true });
   if (!r.stdout) return false;
   const re = new RegExp(':' + port + '(?:\\s|$)');
   return r.stdout.split(/\r?\n/).some((line) => re.test(line) && /LISTENING/i.test(line));
@@ -59,7 +61,7 @@ const send = (res, code, body) => {
 /** 等 8600 空出来再拉服务端：停止是异步退出的，紧接着启动会撞上旧进程还没退完 */
 async function startServer() {
   const deadline = Date.now() + 20000;
-  while (Date.now() < deadline && listening(8600)) await sleep(400);
+  while (Date.now() < deadline && listening(8600)) await sleep(1000);
   if (listening(8600)) return { ok: false, error: '端口 8600 仍被占用（旧服务端可能还没退完），请稍后重试' };
   const out = fs.openSync(LOG, 'a');
   const child = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {

@@ -232,24 +232,31 @@ export function planServerStop(moduleUrl: string = import.meta.url): RestartPlan
  * 免得 :8600 命中 :86000。
  */
 function listening(port: number): boolean {
-  const cmd = IS_WIN
-    ? 'netstat -ano'
-    : '(ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null)';
-  const r = spawnSync(cmd, { shell: true, encoding: 'utf8', timeout: 8000, windowsHide: true });
+  if (!IS_WIN) {
+    const r = spawnSync('sh', ['-c', '(ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null)'], { encoding: 'utf8', timeout: 8000 });
+    if (!r.stdout) return false;
+    const re = new RegExp(':' + port + '(?:\\s|$)');
+    return r.stdout.split(/\r?\n/).some(line => re.test(line));
+  }
+  // 注意不能用 { shell: true }：那会走 cmd.exe /c，父进程没有控制台时 Windows 会给它
+  // 新开一个控制台——表现为屏幕上疯狂闪 cmd 窗口。直接调 netstat.exe 不会。
+  const r = spawnSync('netstat', ['-ano'], { encoding: 'utf8', timeout: 8000, windowsHide: true });
   if (!r.stdout) return false;
   const re = new RegExp(':' + port + '(?:\\s|$)');
   // Windows 的 netstat 会把 TIME_WAIT/CLOSE_WAIT 的连接也列出来，本地端口同样是 8600，
   // 只认 LISTENING 行，否则服务端明明已经退了还被判成占用，启动就一直被拒。
   return r.stdout.split(/\r?\n/).some(line => re.test(line) && (!IS_WIN || /LISTENING/i.test(line)));
 }
-export function startServerProcess(moduleUrl: string = import.meta.url, port = 8600, waitMs = 12000): StartBridgeResult {
+export function startServerProcess(moduleUrl: string = import.meta.url, port = 8600, waitMs = 12000): StartBridgeResult & { already?: boolean } {
   const root = repoRoot(moduleUrl);
   const serverDir = path.join(root, 'server');
   const entry = path.join(serverDir, 'src/index.ts');
   if (!fs.existsSync(entry)) return { ok: false, error: '找不到服务端入口：' + entry };
+  // 已经在跑就立刻返回，不要白等——最常见的情况就是点多了一次
+  if (listening(port)) return { ok: true, already: true } as StartBridgeResult;
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline && listening(port)) {
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
   }
   if (listening(port)) return { ok: false, error: '端口 ' + port + ' 仍被占用（旧服务端可能还没退完），请稍后重试' };
   const logDir = path.join(serverDir, 'data/diagnostics');
