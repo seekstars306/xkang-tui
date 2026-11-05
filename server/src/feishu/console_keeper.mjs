@@ -73,12 +73,10 @@ async function startServer() {
   });
   child.unref();
   if (!child.pid) return { ok: false, error: '启动失败：拿不到子进程 PID' };
-  // 给它一点时间证明自己活着
-  for (let i = 0; i < 20; i += 1) {
-    await sleep(500);
-    if (listening(8600)) return { ok: true, pid: child.pid };
-  }
-  return { ok: false, error: '服务端启动后没有监听 8600，详见 ' + LOG };
+  // 拉起来就返回，不在这里等它监听：服务端启动要十几秒，
+  // 阻塞着不返回，页面上就是一个没有任何反应的按钮，用户以为没点上。
+  // 是否真的起来了由页面轮询 /health 确认（mainListening）。
+  return { ok: true, starting: true, pid: child.pid };
 }
 
 const server = createServer((req, res) => {
