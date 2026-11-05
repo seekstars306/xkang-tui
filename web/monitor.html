@@ -243,7 +243,7 @@ function renderConsole(){
           '<div style="font-size:11px;color:#86909c;margin-top:8px">重启会中断所有在途排查，有任务时接口会先拒绝；停止后本页面也随之不可用。</div>'
         : '<div style="font-size:12.5px;color:#4e5969;padding:6px 0">服务端已按控制台指令停止，未自动拉起。恢复命令：<code style="background:#f7f8fa;padding:2px 6px;border-radius:3px">' + esc(S.stopCmd || 'pwsh scripts/start_production.ps1') + '</code></div>' +
           '<div class="btnrow"><button class="primary" id="btnServerStart">启动服务端</button></div>' +
-          '<div style="font-size:11px;color:#86909c;margin-top:8px">页面本身由服务端提供：真正停止后本页已连不上后台，启动按钮通常在服务端已被别的方式拉起后才可用。</div>') +
+          '<div style="font-size:11px;color:#86909c;margin-top:8px">停止后页面连不上服务端，启动会改走接棒小服务（8601）完成；接棒也不在时才需要用命令恢复。</div>') +
     '</div>';
 
   const bridgeCard =
@@ -371,12 +371,27 @@ function bindConsole(){
 }
 
 async function serverAction(action){
+  // 先试服务端自己的接口；服务端已经停了就连不上，这时改走接棒小服务（8601）。
+  // 接棒小服务独立于服务端存活，是"停止之后还能点启动"的唯一办法。
   try {
     const r = await fetch('/admin/feishu/console/server/' + action, { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({}) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { alert(j.error || ('HTTP ' + r.status)); return; }
     if (action === 'start') { S.serverStopped = false; await loadConsole(); }
-  } catch (e) { alert('请求失败：' + e.message + '。服务端可能已停止，请用恢复命令启动。'); }
+    return;
+  } catch (e) {
+    if (action !== 'start') { alert('请求失败：' + e.message); return; }
+  }
+  try {
+    const r = await fetch('http://127.0.0.1:8601/start', { method:'POST', headers:{'Content-Type':'application/json'} });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { alert('接棒服务启动失败：' + (j.error || ('HTTP ' + r.status)) + '。请手动运行：' + (S.stopCmd || 'pwsh scripts/start_production.ps1')); return; }
+    S.serverStopped = false;
+    alert('已通过接棒服务发起启动，服务端起来后本页会自动恢复（约 10 秒）。');
+    setTimeout(() => location.reload(), 10000);
+  } catch (e2) {
+    alert('服务端已停止，接棒服务（8601）也未响应。请手动运行：' + (S.stopCmd || 'pwsh scripts/start_production.ps1'));
+  }
 }
 
 async function bridgeAction(action){

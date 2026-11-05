@@ -9,7 +9,7 @@ import {
   type EnvChange,
 } from './console_config.js';
 import {
-  appendAudit, findBridge, findServerProcesses, isRunning, planServerRestart, planServerStop, repoRoot, startBridge, startServerProcess, terminate,
+  appendAudit, ensureKeeper, KEEPER_PORT, findBridge, findServerProcesses, isRunning, planServerRestart, planServerStop, repoRoot, startBridge, startServerProcess, terminate,
 } from './console_process.js';
 
 /**
@@ -84,6 +84,8 @@ export function consoleAuth(options: ConsoleOptions) {
 export function mountFeishuConsole(app: Express, options: ConsoleOptions): void {
   const auth = consoleAuth(options) as unknown as (req: Request, res: Response, next: () => void) => void;
   const db = () => getMonitorDb();
+  // 接棒小服务：服务端被控制台停掉之后，页面还能靠它把服务端拉回来
+  const keeper = ensureKeeper(import.meta.url);
   const actor = (req: Request) => String((req as any).user?.name || 'unknown');
 
   /** 在途任务：跑着的 + 排队的。重启/停桥都会打断它们，必须先给人看。 */
@@ -113,6 +115,7 @@ export function mountFeishuConsole(app: Express, options: ConsoleOptions): void 
           serverProcessCount: findServerProcesses().length,
         },
         serverRunning: true,
+        keeper: { ok: keeper.ok, port: KEEPER_PORT, error: keeper.error },
         bridge: {
           running: isRunning(bridge),
           pid: bridge?.pid ?? null,

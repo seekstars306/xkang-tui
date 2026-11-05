@@ -271,6 +271,39 @@ export function startServerProcess(moduleUrl: string = import.meta.url, port = 8
   }
 }
 
+/** 接棒小服务的端口（与 console_keeper.mjs 保持一致） */
+export const KEEPER_PORT = Number(process.env.XKANG_KEEPER_PORT || 8601);
+
+/** 接棒脚本路径 */
+export function keeperPath(moduleUrl: string = import.meta.url): string {
+  return path.join(path.dirname(fileURLToPath(moduleUrl)), 'console_keeper.mjs');
+}
+
+/**
+ * 确保接棒小服务在跑。服务端每次启动都调一次：
+ * 端口已被占用（说明已经有一份）就什么都不做；没起过就拉起来。
+ * 它独立于服务端存活，服务端停止后仍然能接收"启动"指令。
+ */
+export function ensureKeeper(moduleUrl: string = import.meta.url): { ok: boolean; pid?: number; error?: string } {
+  const script = keeperPath(moduleUrl);
+  if (!fs.existsSync(script)) return { ok: false, error: '找不到接棒脚本：' + script };
+  // 已经有一份在跑就不再拉：keeper 自己遇到端口占用会安静退出，
+  // 但每次重启都白拉一次进程没必要，先探一下。
+  if (listening(KEEPER_PORT)) return { ok: true, pid: undefined };
+  try {
+    const child = spawn(process.execPath, [script], {
+      cwd: repoRoot(moduleUrl),
+      env: { ...process.env },
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    child.unref();
+    return { ok: true, pid: child.pid };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
 export interface AuditEntry {
   at: string;
   actor: string;
