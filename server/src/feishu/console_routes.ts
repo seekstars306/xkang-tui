@@ -8,6 +8,7 @@ import {
   CONFIG_FIELDS, configField, describeConfig, editableKeys, envFilePath, validateConfigValue, writeEnvFile,
   type EnvChange,
 } from './console_config.js';
+import { listMcpStatus, startMcpService, stopMcpService } from './console_mcp.js';
 import {
   appendAudit, ensureKeeper, KEEPER_PORT, findBridge, findServerProcesses, isRunning, planServerRestart, planServerStop, repoRoot, startBridge, startServerProcess, terminate,
 } from './console_process.js';
@@ -257,6 +258,34 @@ export function mountFeishuConsole(app: Express, options: ConsoleOptions): void 
     });
     if (!r.ok) { res.status(500).json({ error: r.error }); return; }
     res.json({ ok: true, added: r.added, updated: r.updated, backupPath: r.backupPath, restartRequired });
+  });
+
+  app.get('/admin/feishu/console/mcp', auth, (_req, res) => {
+    try { res.json({ services: listMcpStatus(import.meta.url) }); }
+    catch (e) { res.status(500).json({ error: String(e) }); }
+  });
+
+  app.post('/admin/feishu/console/mcp/:name/:action', auth, (req, res) => {
+    const name = String(req.params.name);
+    const action = String(req.params.action);
+    if (!['start', 'stop', 'restart'].includes(action)) { res.status(400).json({ error: '动作只能是 start/stop/restart' }); return; }
+    const who = actor(req);
+    try {
+      if (action === 'stop' || action === 'restart') {
+        const r = stopMcpService(name, import.meta.url);
+        // 停一个本来就没在跑的服务不算失败，但要说清楚，别让人以为生效了
+        if (!r.ok && !/未在运行/.test(r.error || '')) {
+          appendAudit(import.meta.url, { at: new Date().toISOString(), actor: who, action: 'mcp.' + action, detail: { ok: false, name, error: r.error } });
+          res.status(500).json({ error: r.error });
+          return;
+        }
+        appendAudit(import.meta.url, { at: new Date().toISOString(), actor: who, action: 'mcp.' + action, detail: { ok: true, name, pid: r.pid, wasRunning: r.ok } });
+        if (action === 'stop') { res.json({ ok: true, name, wasRunning: r.ok }); return; }
+      }
+      const r = startMcpService(name, import.meta.url);
+      appendAudit(import.meta.url, { at: new Date().toISOString(), actor: who, action: 'mcp.' + action, detail: { ok: r.ok, name, pid: r.pid, error: r.error } });
+      res.json(r.ok ? { ok: true, name, pid: r.pid, logFile: r.logFile, already: !r.logFile } : { ok: false, error: r.error });
+    } catch (e) { res.status(500).json({ error: String(e) }); }
   });
 
   app.get('/admin/feishu/console/audit', auth, (req, res) => {

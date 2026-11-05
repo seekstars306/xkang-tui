@@ -92,7 +92,7 @@
 <body>
 <div id="app"></div>
 <script>
-const S = { token: localStorage.getItem('feishu_admin_token') || '', stats:null, tasks:[], active:null, detail:null, tab:'input', filter:{ status:'', chatId:'', requester:'' }, chats:[], requesters:[], view:'tasks', console:null, consoleErr:'', saving:false, saved:'', serverStopped:false, stopCmd:'', starting:'' };
+const S = { token: localStorage.getItem('feishu_admin_token') || '', stats:null, tasks:[], active:null, detail:null, tab:'input', filter:{ status:'', chatId:'', requester:'' }, chats:[], requesters:[], view:'tasks', console:null, consoleErr:'', saving:false, saved:'', serverStopped:false, stopCmd:'', starting:'', mcp:null, mcpErr:'', mcpBusy:'' };
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -201,8 +201,8 @@ async function loadConsole(){
   if (S.starting) { render(); return; }
   if (S.serverStopped) { render(); return; }
   try {
-    const [status, config] = await Promise.all([api('/console/status'), api('/console/config')]);
-    S.console = { status, config }; S.consoleErr = '';
+    const [status, config, mcp] = await Promise.all([api('/console/status'), api('/console/config'), api('/console/mcp').catch(() => ({ services: [] }))]);
+    S.console = { status, config }; S.consoleErr = ''; S.mcp = mcp; S.mcpErr = '';
   } catch (e) { S.consoleErr = String(e.message || e); }
   render();
 }
@@ -289,11 +289,41 @@ function renderConsole(){
       '<div class="btnrow"><button id="btnRefreshStatus">刷新状态</button></div>' +
     '</div>';
 
+  const mcpCard = (() => {
+    if (S.mcpErr) return '<div class="card"><h3>MCP 服务</h3><div class="notice err">加载失败：' + esc(S.mcpErr) + '</div></div>';
+    const list = (S.mcp && S.mcp.services) || [];
+    if (!list.length) return '<div class="card"><h3>MCP 服务</h3><div style="font-size:12.5px;color:#86909c">tools/ 下还没有 mcp-* 目录。</div></div>';
+    return '<div class="card"><h3>MCP 服务</h3>' +
+      list.map(svc => {
+        const busy = S.mcpBusy === svc.name;
+        const btns = svc.running
+          ? '<button id="mcp-restart-' + esc(svc.name) + '"' + (busy?' disabled':'') + '>重启</button>' +
+            '<button class="danger" id="mcp-stop-' + esc(svc.name) + '"' + (busy?' disabled':'') + '>停止</button>'
+          : (svc.startable
+              ? '<button class="primary" id="mcp-start-' + esc(svc.name) + '"' + (busy?' disabled':'') + '>启动</button>'
+              : '<span style="font-size:12px;color:#86909c">stdio 服务需由客户端以管道拉起</span>');
+        return '<div style="border-bottom:1px solid #f7f8fa;padding:8px 0">' +
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">' +
+            '<b style="font-size:13px">' + esc(svc.label) + '</b>' +
+            '<span class="pill ' + (svc.running?'up':'down') + '">' + (svc.running?'运行中':'未运行') + '</span>' +
+            '<span class="pill restart">' + esc(svc.transport) + '</span>' +
+            (svc.startable ? '' : '<span class="pill warn">客户端拉起</span>') +
+          '</div>' +
+          (svc.description ? '<div style="font-size:12px;color:#4e5969;margin-bottom:4px">' + esc(svc.description) + '</div>' : '') +
+          '<div style="font-size:11.5px;color:#86909c">入口 ' + esc(svc.entry) + (svc.pid ? ' · PID ' + svc.pid : '') + (svc.startedAt ? ' · 启动于 ' + fmtTime(svc.startedAt) : '') + '</div>' +
+          (svc.transport === 'stdio' ? '<div style="font-size:11.5px;color:#86909c;margin-top:2px">客户端启动命令：<code style="background:#f7f8fa;padding:1px 5px;border-radius:3px">' + esc(svc.clientCommand) + '</code></div>' : '') +
+          '<div class="btnrow">' + btns + '</div>' +
+        '</div>';
+      }).join('') +
+      '<div style="font-size:11px;color:#86909c;margin-top:8px">MCP 服务通常由使用方（ZCode / DSH）以管道拉起，进程挂在客户端名下；控制台能看到它、停掉它。http 传输的服务才能由控制台直接启动。</div>' +
+      '</div>';
+  })();
+
   return '<div class="console">'
     + (S.starting ? '<div class="notice" style="background:#e8f3ff;color:#0e4fd4;border:1px solid #b8d4ff">' + (S.starting==='restart'?'服务端正在重启':'服务端正在启动') + '，请稍候（通常 10-30 秒），页面会自动恢复。</div>' : '')
     + (S.serverStopped ? '<div class="notice warn">服务端已停止。恢复请运行 <code>' + esc(S.stopCmd || 'pwsh scripts/start_production.ps1') + '</code>；重新起来后本页会自动恢复显示。</div>' : '')
     + (S.saved ? '<div class="notice ok">配置已保存：' + esc(S.saved) + '。标记为"需重启"的项目要重启服务端后才生效。</div>' : '')
-    + '<div class="cards">' + serverCard + bridgeCard + inflightCard + restartCard + '</div>'
+    + '<div class="cards">' + serverCard + bridgeCard + inflightCard + restartCard + mcpCard + '</div>'
     + renderConfigForm(c.config)
     + '</div>';
 }
@@ -368,6 +398,10 @@ function bindConsole(){
     if (n > 0 && !confirm('再次确认：这 ' + n + ' 个进行中的排查会被中断，结果记为失败。继续？')) return;
     serverAction('restart');
   });
+  // MCP 服务按钮（动态 id，逐个绑）
+  document.querySelectorAll('[id^="mcp-start-"]').forEach(el => el.onclick = () => mcpAction(el.id.replace('mcp-start-',''), 'start'));
+  document.querySelectorAll('[id^="mcp-stop-"]').forEach(el => el.onclick = () => mcpAction(el.id.replace('mcp-stop-',''), 'stop'));
+  document.querySelectorAll('[id^="mcp-restart-"]').forEach(el => el.onclick = () => mcpAction(el.id.replace('mcp-restart-',''), 'restart'));
   on('btnSaveConfig', saveConfig);
 }
 
@@ -419,6 +453,18 @@ async function waitServerUp(){
   S.starting='';
   alert('等了 90 秒服务端仍未起来。请查看 server/data/diagnostics/ 下的 restart-from-console.log 与 keeper.log，或手动运行：' + (S.stopCmd || 'pwsh scripts/start_production.ps1'));
   render();
+}
+async function mcpAction(name, action){
+  if (S.mcpBusy) return;
+  S.mcpBusy = name; render();
+  try {
+    const r = await fetch('/admin/feishu/console/mcp/' + encodeURIComponent(name) + '/' + action, { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({}) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { alert(j.error || ('HTTP ' + r.status)); S.mcpBusy=''; render(); return; }
+    if (action === 'stop' && j.wasRunning === false) { alert('该 MCP 服务本来就没在运行。'); }
+    await loadConsole();
+  } catch (e) { alert('请求失败：' + e.message); }
+  S.mcpBusy=''; render();
 }
 async function bridgeAction(action){
   try {
