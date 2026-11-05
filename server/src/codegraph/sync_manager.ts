@@ -1,16 +1,34 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execFile } from 'node:child_process';
 import { CodeGraphService } from './service.js';
 import { evaluateAll, writeTrustReport, type ManifestEntryLite, type RepoState } from './version_trust.js';
 
-const execAsync = promisify(exec);
-
 /** 可注入的 git 命令执行器（测试用来记录"到底执行过哪些命令"） */
 export type RunCommand = (command: string, options: { cwd: string; timeout: number }) => Promise<{ stdout: string | Buffer; stderr: string | Buffer }>;
-const defaultRunCommand: RunCommand = (command, options) => execAsync(command, { cwd: options.cwd, timeout: options.timeout }) as Promise<{ stdout: string | Buffer; stderr: string | Buffer }>;
+
+/**
+ * 默认执行器：直接 execFile，不走 shell。
+ *
+ * 以前用 promisify(exec(command))——child_process.exec 一律经 shell 执行，
+ * Windows 上就是 cmd.exe /d /s /c "git ..."。服务端没有控制台时（被接棒服务/ relauncher
+ * 拉起就是这种情况），Windows 给每个 cmd 新开一个控制台：一次代码同步 18 个仓库 ×
+ * 六七条 git 命令，屏幕上就是一百多个窗口连闪。
+ *
+ * 顺带修掉一个隐藏问题：cmd.exe 会把 ^ 当转义符，
+ * 'git rev-parse P1.0.9^{commit}' 传进去实际变成 P1.0.9{commit}，
+ * 标签比对一直是错的；不过 shell 之后参数按字面传递，不会再被吃。
+ */
+const defaultRunCommand: RunCommand = (command, options) => {
+  const [file, ...args] = command.trim().split(/\s+/);
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { cwd: options.cwd, timeout: options.timeout, windowsHide: true, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (error) reject(error);
+      else resolve({ stdout, stderr });
+    });
+  });
+};
 
 /** 图谱数据目录：与 stats.json 同目录（解析顺序与 server/src/tools/codegraph.ts 保持一致，供 mirror-health.json 落盘） */
 function resolveGraphDataDir(): string {
