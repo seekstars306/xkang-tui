@@ -68,6 +68,15 @@ test('接棒服务：起一份、/health 可访问、/start 在已运行时返�
   }
 });
 
+test('接棒服务检测到脚本更新会自行退出，由服务端重新拉起', () => {
+  const src = fs.readFileSync(keeper, 'utf8');
+  assert.match(src, /exitIfStale/, '应有更新检测函数');
+  assert.match(src, /mtimeMs/, '应比较脚本 mtime');
+  // 不再自己 spawn 接班人：那会和旧进程抢端口，试过一次反而更脆
+  assert.doesNotMatch(src, /handOverIfStale/, '不应再自己拉接班人');
+  assert.doesNotMatch(src, /shell: true/, '不能走 shell（会闪 cmd 窗口）');
+});
+
 test('KEEPER_PORT 默认 8601，可用环境变量覆盖', () => {
   assert.equal(KEEPER_PORT, Number(process.env.XKANG_KEEPER_PORT || 8601));
   assert.ok(KEEPER_PORT > 0 && KEEPER_PORT < 65536);

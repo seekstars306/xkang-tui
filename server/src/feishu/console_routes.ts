@@ -84,8 +84,12 @@ export function consoleAuth(options: ConsoleOptions) {
 export function mountFeishuConsole(app: Express, options: ConsoleOptions): void {
   const auth = consoleAuth(options) as unknown as (req: Request, res: Response, next: () => void) => void;
   const db = () => getMonitorDb();
-  // 接棒小服务：服务端被控制台停掉之后，页面还能靠它把服务端拉回来
+  // 接棒小服务：服务端被控制台停掉之后，页面还能靠它把服务端拉回来。
+  // 定时兜底两个作用：keeper 自己挂了要拉起来；keeper 发现脚本更新自行退出后，
+  // 15 秒内要有新的一份接上（否则改完代码不重启服务端，旧 keeper 会一直跑旧逻辑）。
   const keeper = ensureKeeper(import.meta.url);
+  const keeperTimer = setInterval(() => { ensureKeeper(import.meta.url); }, 15000);
+  keeperTimer.unref();
   const actor = (req: Request) => String((req as any).user?.name || 'unknown');
 
   /** 在途任务：跑着的 + 排队的。重启/停桥都会打断它们，必须先给人看。 */

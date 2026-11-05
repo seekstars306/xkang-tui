@@ -82,6 +82,7 @@ async function startServer() {
 }
 
 const server = createServer((req, res) => {
+  exitIfStale();
   if (req.method === 'OPTIONS') { res.writeHead(204, cors); res.end(); return; }
   const url = new URL(req.url, 'http://127.0.0.1');
   if (req.method === 'GET' && (url.pathname === '/health' || url.pathname === '/status')) {
@@ -96,6 +97,28 @@ const server = createServer((req, res) => {
   send(res, 404, { error: 'not found' });
 });
 
+/* ---------------- 自更新 ---------------- */
+/*
+ * 常驻进程最容易踩的坑：改了脚本，正在跑的进程还是旧代码。
+ * 2026-11-05 就是这样——keeper 还是带 { shell: true } 的旧版，点启动时疯狂闪 cmd 窗口。
+ *
+ * 这里只做检测和退出，不自己拉接班人：自己 spawn 再退会和旧进程抢端口，
+ * 试过一次反而更脆。退出之后由服务端的定时 ensureKeeper 拉起新的一份
+ * （间隔 15 秒，且服务端重启时会立刻拉）。
+ */
+const SELF = fileURLToPath(import.meta.url);
+let selfMtime = 0;
+try { selfMtime = fs.statSync(SELF).mtimeMs; } catch { /* 拿不到就算了 */ }
+
+function exitIfStale() {
+  try {
+    if (fs.statSync(SELF).mtimeMs <= selfMtime) return;
+  } catch { return; }
+  log('脚本已更新，退出以便服务端拉起新版本');
+  process.exit(0);
+}
+
+setInterval(exitIfStale, 10000).unref();
 server.on('error', (e) => {
   // 端口已被别的 keeper 占用：安静退出，不报错、不写日志噪音
   if (e && e.code === 'EADDRINUSE') process.exit(0);
@@ -103,4 +126,19 @@ server.on('error', (e) => {
   process.exit(1);
 });
 
-server.listen(PORT, '127.0.0.1', () => log('keeper 已启动 pid=' + process.pid + ' port=' + PORT));
+function listenWithRetry(attempt = 0) {
+  server.listen(PORT, '127.0.0.1', () => log('keeper 已启动 pid=' + process.pid + ' port=' + PORT));
+  server.on('error', (e) => {
+    if (e && e.code === 'EADDRINUSE' && attempt < 40) {
+      log('端口仍被占用，第 ' + (attempt + 1) + ' 次重试');
+      // 这个定时器不能 unref：重试期间事件库可能只剩它一个待办，unref 会让进程直接退出，
+      // 表现为"交接后新 keeper 没起来"，而 stdio 是 ignore，连报错都看不到。
+      setTimeout(() => { server.removeAllListeners('error'); listenWithRetry(attempt + 1); }, 500);
+      return;
+    }
+    if (e && e.code === 'EADDRINUSE') process.exit(0);
+    log('server error: ' + e.message);
+    process.exit(1);
+  });
+}
+listenWithRetry();
