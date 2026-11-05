@@ -23,6 +23,7 @@ const repoRoot = path.resolve(here, '../../..');
 const serverDir = path.join(repoRoot, 'server');
 const PORT = Number(process.env.XKANG_KEEPER_PORT || 8601);
 const LOG = path.join(serverDir, 'data/diagnostics/keeper.log');
+const STATUS = path.join(serverDir, 'data/diagnostics/restart-status.json');
 
 const log = (line) => {
   try {
@@ -59,6 +60,29 @@ const send = (res, code, body) => {
 };
 
 /** 等 8600 空出来再拉服务端：停止是异步退出的，紧接着启动会撞上旧进程还没退完 */
+/**
+ * 启动成功后把状态文件改成 started。
+ *
+ * 以前只有 relaunch_server.mjs 写状态，接棒服务这条路径不写——
+ * 于是"停止→经接棒启动"之后文件一直停在 stopped，控制台那张卡片
+ * 继续显示"已停止"，而服务端其实好好跑着。比没有卡片更糟：会让人去重复启动。
+ */
+function markStarted(pid) {
+  try {
+    fs.mkdirSync(path.dirname(STATUS), { recursive: true });
+    fs.writeFileSync(STATUS, JSON.stringify({
+      state: 'started',
+      startedAt: new Date().toISOString(),
+      at: new Date().toISOString(),
+      pid,
+      cwd: serverDir,
+      entry: 'src/index.ts',
+      command: process.execPath + ' --import tsx src/index.ts',
+      note: '由接棒服务（keeper）拉起。',
+    }, null, 2));
+  } catch { /* 状态写不进去也不能停 */ }
+}
+
 async function startServer() {
   const deadline = Date.now() + 20000;
   while (Date.now() < deadline && listening(8600)) await sleep(1000);
@@ -76,6 +100,7 @@ async function startServer() {
   // 拉起来就返回，不在这里等它监听：服务端启动要十几秒，
   // 阻塞着不返回，页面上就是一个没有任何反应的按钮，用户以为没点上。
   // 是否真的起来了由页面轮询 /health 确认（mainListening）。
+  markStarted(child.pid);
   return { ok: true, starting: true, pid: child.pid };
 }
 
@@ -88,7 +113,7 @@ const server = createServer((req, res) => {
     return;
   }
   if (req.method === 'POST' && url.pathname === '/start') {
-    if (listening(8600)) { send(res, 200, { ok: true, already: true }); return; }
+    if (listening(8600)) { markStarted(0); send(res, 200, { ok: true, already: true }); return; }
     startServer().then((r) => { log('start -> ' + JSON.stringify(r)); send(res, r.ok ? 200 : 500, r); });
     return;
   }

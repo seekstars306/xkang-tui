@@ -275,11 +275,13 @@ function renderConsole(){
         + '<span class="badge ' + esc(t.status) + '">' + esc(t.status) + '</span> ' + esc(t.chatName || t.id) + ' · ' + esc(t.preview || '') + '</div>').join('') : '') +
     '</div>';
 
+  const rsLive = Boolean(rs && rs.stale);
   const restartCard =
-    '<div class="card"><h3>重启状态</h3>' +
+    '<div class="card"><h3>重启状态 <span class="pill ' + (rsLive ? 'up' : (rs && rs.state==='started' ? 'up' : rs && rs.state==='failed' ? 'warn' : 'restart')) + '">' + (rsLive ? '服务端运行中' : esc(restartStateText(rs && rs.state))) + '</span></h3>' +
       (rs
-        ? '<dl class="kv">'
-          + '<dt>状态</dt><dd><span class="pill ' + (rs.state==='started'?'up':rs.state==='failed'?'warn':'restart') + '">' + esc(restartStateText(rs.state)) + '</span></dd>'
+        ? (rsLive ? '<div style="font-size:12.5px;color:#4e5969;margin-bottom:8px">服务端正在运行，下面是上次通过控制台做过的操作，仅作历史记录。</div>' : '')
+        + '<dl class="kv">'
+          + (rsLive ? '' : '<dt>状态</dt><dd><span class="pill ' + (rs.state==='started'?'up':rs.state==='failed'?'warn':'restart') + '">' + esc(restartStateText(rs.state)) + '</span></dd>')
           + '<dt>时间</dt><dd>' + fmtTime(rs.at) + '</dd>'
           + (rs.pid ? '<dt>新进程</dt><dd>PID ' + esc(String(rs.pid)) + '</dd>' : '')
           + (rs.command ? '<dt>命令</dt><dd>' + esc(rs.command) + '</dd>' : '')

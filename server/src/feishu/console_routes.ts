@@ -24,30 +24,6 @@ import {
  *   3. 每个动作都写审计（谁、什么时候、影响了哪些 pid/键），密钥值一律不记录。
  */
 
-export interface ConsoleOptions {
-  accounts: MonitorAccount[];
-  sessionSecret: string;
-  config: ServerConfig;
-}
-
-interface RestartStatusFile {
-  state?: string;
-  at?: string;
-  pid?: number;
-  error?: string;
-  command?: string;
-}
-
-function diagnosticsDir(): string {
-  return path.join(repoRoot(import.meta.url), 'server/data/diagnostics');
-}
-
-function readRestartStatus(): RestartStatusFile | null {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(diagnosticsDir(), 'restart-status.json'), 'utf8'));
-  } catch { return null; }
-}
-
 /**
  * 控制台鉴权：监控台会话 Cookie，或**校验过的**管理员令牌。
  *
@@ -81,7 +57,43 @@ export function consoleAuth(options: ConsoleOptions) {
     res.status(401).json({ error: '未登录' });
   };
 }
+export interface ConsoleOptions {
+  accounts: MonitorAccount[];
+  sessionSecret: string;
+  config: ServerConfig;
+}
 
+interface RestartStatusFile {
+  state?: string;
+  at?: string;
+  pid?: number;
+  error?: string;
+  command?: string;
+}
+
+function diagnosticsDir(): string {
+  return path.join(repoRoot(import.meta.url), 'server/data/diagnostics');
+}
+
+/**
+ * 读重启状态，并且以真实状态为准。
+ *
+ * 状态文件只记录"上次通过控制台做过什么"，和服务端真实状态是两件事：
+ * 手动启动、或经接棒服务启动，都不会把 stopped 改成 started（接棒那条已补上），
+ * 直接照文件写就会在服务端好好跑着的时候显示"已停止"——比没有卡片更糟。
+ * 所以这里按 serverRunning 纠偏：在跑就把 state 归成 running 并标 stale，
+ * 让界面把它当历史展示，不冒充当前状态。
+ */
+function readRestartStatus(serverRunning = true): (RestartStatusFile & { stale?: boolean }) | null {
+  let raw: RestartStatusFile | null = null;
+  try {
+    raw = JSON.parse(fs.readFileSync(path.join(diagnosticsDir(), 'restart-status.json'), 'utf8'));
+  } catch { return null; }
+  if (!raw || typeof raw !== 'object') return null;
+  const stoppedLike = raw.state === 'stopped' || raw.state === 'failed';
+  if (serverRunning && stoppedLike) return { ...raw, state: 'running', stale: true };
+  return raw;
+}
 export function mountFeishuConsole(app: Express, options: ConsoleOptions): void {
   const auth = consoleAuth(options) as unknown as (req: Request, res: Response, next: () => void) => void;
   const db = () => getMonitorDb();
@@ -128,7 +140,7 @@ export function mountFeishuConsole(app: Express, options: ConsoleOptions): void 
           commandLine: bridge?.commandLine ?? null,
         },
         inFlight: running,
-        restart: readRestartStatus(),
+        restart: readRestartStatus(true),
       });
     } catch (e) { res.status(500).json({ error: String(e) }); }
   });

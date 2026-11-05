@@ -79,6 +79,13 @@ test('接棒服务检测到脚本更新会自行退出，由服务端重新拉�
   assert.match(src, /spawnSync\('netstat', \['-ano'\]/, '应直接调 netstat.exe');
 });
 
+test('接棒服务启动成功后会写 started 状态，不停留在 stopped', () => {
+  const src = fs.readFileSync(keeper, 'utf8');
+  assert.match(src, /markStarted/, '应有状态更新函数');
+  assert.match(src, /state: 'started'/, '应写 started');
+  // 两条路径都要标：新拉起的、以及发现已经在跑的
+  assert.equal((src.match(/markStarted\(/g) || []).length >= 3, true, '启动成功与已在运行两条路径都要标');
+});
 test('KEEPER_PORT 默认 8601，可用环境变量覆盖', () => {
   assert.equal(KEEPER_PORT, Number(process.env.XKANG_KEEPER_PORT || 8601));
   assert.ok(KEEPER_PORT > 0 && KEEPER_PORT < 65536);
