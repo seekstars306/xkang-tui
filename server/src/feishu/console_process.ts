@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
+import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,6 +63,18 @@ export function listProcesses(): ProcInfo[] {
   }).filter((x): x is ProcInfo => x !== null);
 }
 
+/** 把 PowerShell/ps 的原始输出解析成进程列表。空输出与非 JSON 都返回空数组，不抛错。 */
+export function parseProcList(stdout: string): ProcInfo[] {
+  let parsed: any;
+  try { parsed = JSON.parse((stdout || '').trim() || '[]'); } catch { return []; }
+  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  return rows.filter(r => r && typeof r.ProcessId === 'number').map(r => ({
+    pid: r.ProcessId,
+    ppid: Number(r.ParentProcessId ?? 0),
+    commandLine: String(r.CommandLine ?? ''),
+    startedAt: parseCimDate(r.StartedAt ?? r.CreationDate),
+  }));
+}
 const BRIDGE_MARK = /feishu[\\/]main\.(ts|js)/;
 const SERVER_MARK = /(^|[\\/])src[\\/]index\.(ts|js)|dist[\\/]index\.js/;
 
@@ -183,6 +196,78 @@ export function planServerRestart(moduleUrl: string = import.meta.url, extra: { 
     };
   } catch (e) {
     return { ok: false, error: (e as Error).message, command: '' };
+  }
+}
+
+/**
+ * 安排一次停止：不接棒，服务端退出后保持停止。
+ * 与 planServerRestart 的区别只在于要不要 relauncher——停完之后监控台自己也访问不了，
+ * 所以把恢复命令写进状态文件，用户随时能看到。
+ */
+export function planServerStop(moduleUrl: string = import.meta.url): RestartPlan & { stopped: true } {
+  const root = repoRoot(moduleUrl);
+  const serverDir = path.join(root, 'server');
+  const logDir = path.join(serverDir, 'data/diagnostics');
+  fs.mkdirSync(logDir, { recursive: true });
+  const logFile = path.join(logDir, 'restart-from-console.log');
+  const statusFile = path.join(logDir, 'restart-status.json');
+  const command = 'pwsh scripts/start_production.ps1';
+  try {
+    fs.writeFileSync(statusFile, JSON.stringify({
+      state: 'stopped', startedAt: new Date().toISOString(), at: new Date().toISOString(),
+      parentPid: process.pid, cwd: serverDir, entry: 'src/index.ts', command,
+      note: '服务端已按控制台指令停止，未自动拉起。恢复请运行上面的命令。',
+    }, null, 2));
+    return { ok: true, statusFile, logFile, command, stopped: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message, command: '', stopped: true };
+  }
+}
+
+/**
+ * 端口上是否已有监听。
+ *
+ * 用 net.Socket().connect() 是异步的，函数返回时事件还没来，测不准——
+ * 所以这里用同步的 netstat/ss。匹配时要求端口号后面是空白或行尾，
+ * 免得 :8600 命中 :86000。
+ */
+function listening(port: number): boolean {
+  const cmd = IS_WIN
+    ? 'netstat -ano'
+    : '(ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null)';
+  const r = spawnSync(cmd, { shell: true, encoding: 'utf8', timeout: 8000, windowsHide: true });
+  if (!r.stdout) return false;
+  const re = new RegExp(':' + port + '(?:\\s|$)');
+  // Windows 的 netstat 会把 TIME_WAIT/CLOSE_WAIT 的连接也列出来，本地端口同样是 8600，
+  // 只认 LISTENING 行，否则服务端明明已经退了还被判成占用，启动就一直被拒。
+  return r.stdout.split(/\r?\n/).some(line => re.test(line) && (!IS_WIN || /LISTENING/i.test(line)));
+}
+export function startServerProcess(moduleUrl: string = import.meta.url, port = 8600, waitMs = 12000): StartBridgeResult {
+  const root = repoRoot(moduleUrl);
+  const serverDir = path.join(root, 'server');
+  const entry = path.join(serverDir, 'src/index.ts');
+  if (!fs.existsSync(entry)) return { ok: false, error: '找不到服务端入口：' + entry };
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline && listening(port)) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+  }
+  if (listening(port)) return { ok: false, error: '端口 ' + port + ' 仍被占用（旧服务端可能还没退完），请稍后重试' };
+  const logDir = path.join(serverDir, 'data/diagnostics');
+  fs.mkdirSync(logDir, { recursive: true });
+  const logFile = path.join(logDir, 'start-from-console.log');
+  try {
+    const child = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
+      cwd: serverDir,
+      env: { ...process.env },
+      detached: true,
+      stdio: ['ignore', fs.openSync(logFile, 'a'), fs.openSync(logFile, 'a')],
+      windowsHide: true,
+    });
+    child.unref();
+    if (!child.pid) return { ok: false, error: '启动服务端失败：拿不到子进程 PID' };
+    return { ok: true, pid: child.pid, logFile };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
   }
 }
 

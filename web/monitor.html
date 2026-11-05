@@ -92,7 +92,7 @@
 <body>
 <div id="app"></div>
 <script>
-const S = { token: localStorage.getItem('feishu_admin_token') || '', stats:null, tasks:[], active:null, detail:null, tab:'input', filter:{ status:'', chatId:'', requester:'' }, chats:[], requesters:[], view:'tasks', console:null, consoleErr:'', saving:false, saved:'' };
+const S = { token: localStorage.getItem('feishu_admin_token') || '', stats:null, tasks:[], active:null, detail:null, tab:'input', filter:{ status:'', chatId:'', requester:'' }, chats:[], requesters:[], view:'tasks', console:null, consoleErr:'', saving:false, saved:'', serverStopped:false, stopCmd:'' };
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -198,6 +198,7 @@ function render(){
 /* ---------------- 服务端控制台 ---------------- */
 
 async function loadConsole(){
+  if (S.serverStopped) { render(); return; }
   try {
     const [status, config] = await Promise.all([api('/console/status'), api('/console/config')]);
     S.console = { status, config }; S.consoleErr = '';
@@ -222,22 +223,27 @@ function renderConsole(){
   const s = c.status.server, b = c.status.bridge, inflight = c.status.inFlight || [];
   const rs = c.status.restart;
 
+  const serverUp = !S.serverStopped;
   const serverCard =
     '<div class="card">' +
-      '<h3>xkang 服务端 <span class="pill up">运行中</span></h3>' +
-      '<dl class="kv">' +
-        '<dt>进程</dt><dd>PID ' + s.pid + ' · ' + esc(s.platform) + ' · Node ' + esc(s.node) + '</dd>' +
-        '<dt>已运行</dt><dd>' + fmtUptime(s.uptimeSeconds) + '</dd>' +
-        '<dt>工作目录</dt><dd>' + esc(s.cwd) + '</dd>' +
-        '<dt>监听</dt><dd>' + esc(String(s.port)) + '</dd>' +
-        '<dt>复核模式</dt><dd><span class="pill ' + (s.reviewMode==='off'?'down':'warn') + '">' + esc(s.reviewMode) + '</span></dd>' +
-        '<dt>推理档位</dt><dd>' + esc(s.reasoningEffort) + '</dd>' +
-        '<dt>上下文阈值</dt><dd>' + esc(String(s.contextTokens)) + '</dd>' +
-        '<dt>代码库路径</dt><dd>' + esc(s.codeRepoPath) + '</dd>' +
-        '<dt>调度模型</dt><dd>' + esc(s.activeModel) + '</dd>' +
-      '</dl>' +
-      '<div class="btnrow"><button class="danger" id="btnServerRestart">重启服务端</button></div>' +
-      '<div style="font-size:11px;color:#86909c;margin-top:8px">重启会中断所有在途排查；有任务时接口会先拒绝。重启由脱离进程的接棒脚本完成，进展见下方状态。</div>' +
+      '<h3>xkang 服务端 <span class="pill ' + (serverUp?'up':'down') + '">' + (serverUp?'运行中':'未运行') + '</span></h3>' +
+      (serverUp
+        ? '<dl class="kv">' +
+            '<dt>进程</dt><dd>PID ' + s.pid + ' · ' + esc(s.platform) + ' · Node ' + esc(s.node) + '</dd>' +
+            '<dt>已运行</dt><dd>' + fmtUptime(s.uptimeSeconds) + '</dd>' +
+            '<dt>工作目录</dt><dd>' + esc(s.cwd) + '</dd>' +
+            '<dt>监听</dt><dd>' + esc(String(s.port)) + '</dd>' +
+            '<dt>复核模式</dt><dd><span class="pill ' + (s.reviewMode==='off'?'down':'warn') + '">' + esc(s.reviewMode) + '</span></dd>' +
+            '<dt>推理档位</dt><dd>' + esc(s.reasoningEffort) + '</dd>' +
+            '<dt>上下文阈值</dt><dd>' + esc(String(s.contextTokens)) + '</dd>' +
+            '<dt>代码库路径</dt><dd>' + esc(s.codeRepoPath) + '</dd>' +
+            '<dt>调度模型</dt><dd>' + esc(s.activeModel) + '</dd>' +
+          '</dl>' +
+          '<div class="btnrow"><button id="btnServerRestart">重启服务端</button><button class="danger" id="btnServerStop">停止服务端</button></div>' +
+          '<div style="font-size:11px;color:#86909c;margin-top:8px">重启会中断所有在途排查，有任务时接口会先拒绝；停止后本页面也随之不可用。</div>'
+        : '<div style="font-size:12.5px;color:#4e5969;padding:6px 0">服务端已按控制台指令停止，未自动拉起。恢复命令：<code style="background:#f7f8fa;padding:2px 6px;border-radius:3px">' + esc(S.stopCmd || 'pwsh scripts/start_production.ps1') + '</code></div>' +
+          '<div class="btnrow"><button class="primary" id="btnServerStart">启动服务端</button></div>' +
+          '<div style="font-size:11px;color:#86909c;margin-top:8px">页面本身由服务端提供：真正停止后本页已连不上后台，启动按钮通常在服务端已被别的方式拉起后才可用。</div>') +
     '</div>';
 
   const bridgeCard =
@@ -278,6 +284,7 @@ function renderConsole(){
     '</div>';
 
   return '<div class="console">'
+    + (S.serverStopped ? '<div class="notice warn">服务端已停止。恢复请运行 <code>' + esc(S.stopCmd || 'pwsh scripts/start_production.ps1') + '</code>；重新起来后本页会自动恢复显示。</div>' : '')
     + (S.saved ? '<div class="notice ok">配置已保存：' + esc(S.saved) + '。标记为"需重启"的项目要重启服务端后才生效。</div>' : '')
     + '<div class="cards">' + serverCard + bridgeCard + inflightCard + restartCard + '</div>'
     + renderConfigForm(c.config)
@@ -326,6 +333,24 @@ function bindConsole(){
   on('btnBridgeStop', () => bridgeAction('stop'));
   on('btnBridgeRestart', () => bridgeAction('restart'));
   on('btnRefreshStatus', () => loadConsole());
+  on('btnServerStart', () => serverAction('start'));
+  on('btnServerStop', async () => {
+    const c = S.console && S.console.status;
+    const n = (c && c.inFlight || []).length;
+    const msg = n > 0
+      ? '当前有 ' + n + ' 个排查正在进行，停止会中断它们。确定停止服务端？'
+      : '确定停止 xkang 服务端？停止后监控台与群里 @ 都会不可用，需要手动运行恢复命令。';
+    if (!confirm(msg)) return;
+    if (n > 0 && !confirm('再次确认：这 ' + n + ' 个进行中的排查会被中断，结果记为失败。继续？')) return;
+    if (!confirm('最后一次确认：停止后本页面将无法访问，只能用命令恢复。继续？')) return;
+    try {
+      const r = await fetch('/admin/feishu/console/server/stop', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ force: n > 0 }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(j.error || ('HTTP ' + r.status)); return; }
+      S.serverStopped = true; S.stopCmd = j.command || 'pwsh scripts/start_production.ps1';
+      render();
+    } catch (e) { alert('请求失败：' + e.message); }
+  });
   on('btnServerRestart', async () => {
     const c = S.console && S.console.status;
     const n = (c && c.inFlight || []).length;
@@ -343,6 +368,15 @@ function bindConsole(){
     } catch (e) { alert('请求失败：' + e.message); }
   });
   on('btnSaveConfig', saveConfig);
+}
+
+async function serverAction(action){
+  try {
+    const r = await fetch('/admin/feishu/console/server/' + action, { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({}) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { alert(j.error || ('HTTP ' + r.status)); return; }
+    if (action === 'start') { S.serverStopped = false; await loadConsole(); }
+  } catch (e) { alert('请求失败：' + e.message + '。服务端可能已停止，请用恢复命令启动。'); }
 }
 
 async function bridgeAction(action){

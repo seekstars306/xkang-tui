@@ -9,7 +9,7 @@ import {
   type EnvChange,
 } from './console_config.js';
 import {
-  appendAudit, findBridge, findServerProcesses, isRunning, planServerRestart, repoRoot, startBridge, terminate,
+  appendAudit, findBridge, findServerProcesses, isRunning, planServerRestart, planServerStop, repoRoot, startBridge, startServerProcess, terminate,
 } from './console_process.js';
 
 /**
@@ -112,6 +112,7 @@ export function mountFeishuConsole(app: Express, options: ConsoleOptions): void 
           activeModel: process.env.ACTIVE_MODEL ?? '(未设置)',
           serverProcessCount: findServerProcesses().length,
         },
+        serverRunning: true,
         bridge: {
           running: isRunning(bridge),
           pid: bridge?.pid ?? null,
@@ -165,6 +166,33 @@ export function mountFeishuConsole(app: Express, options: ConsoleOptions): void 
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
+  });
+
+  app.post('/admin/feishu/console/server/stop', auth, (req, res) => {
+    const running = inFlight();
+    const who = actor(req);
+    if (running.length > 0 && req.body?.force !== true) {
+      res.status(409).json({
+        error: '有 ' + running.length + ' 个排查正在进行，停止服务端会中断它们。确认要中断请带 force=true。',
+        inFlight: running,
+      });
+      return;
+    }
+    const plan = planServerStop(import.meta.url);
+    appendAudit(import.meta.url, {
+      at: new Date().toISOString(), actor: who, action: 'server.stop',
+      detail: { ok: plan.ok, error: plan.error, interrupted: running.length, command: plan.command },
+    });
+    if (!plan.ok) { res.status(500).json({ error: plan.error }); return; }
+    res.json({ ok: true, command: plan.command, exitingInMs: 1500 });
+    setTimeout(() => process.exit(0), 1500).unref();
+  });
+
+  app.post('/admin/feishu/console/server/start', auth, (_req, res) => {
+    const who = actor(_req);
+    const r = startServerProcess(import.meta.url);
+    appendAudit(import.meta.url, { at: new Date().toISOString(), actor: who, action: 'server.start', detail: { ok: r.ok, pid: r.pid, error: r.error } });
+    res.json(r.ok ? { ok: true, pid: r.pid, logFile: r.logFile } : { ok: false, error: r.error });
   });
 
   app.post('/admin/feishu/console/server/restart', auth, (req, res) => {
