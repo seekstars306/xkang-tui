@@ -65,6 +65,22 @@ export function mountShareRoutes(app: Express): void {
     let answer: unknown = null;
     try { answer = task.answer_json ? JSON.parse(task.answer_json) : null; } catch { answer = null; }
     // 只给公开字段，绝不带 input_text / steps / 原始消息
+    // answer 是完整结构（结论/业务信息/依据/待确认），text 只是发群里的精简文本。
+    // 分享页要展示完整内容，所以优先用 answer；只有老数据（没有 answer）才退回拆 text。
+    const record = (answer && typeof answer === 'object') ? answer as Record<string, unknown> : null;
+    const full = record && typeof record.answer === 'object' && record.answer !== null
+      ? record.answer as Record<string, unknown>
+      : null;
+    const payload = full
+      ? {
+          conclusion: String(full.conclusion ?? ''),
+          businessData: Array.isArray(full.businessData) ? full.businessData : [],
+          evidenceSummary: Array.isArray(full.evidenceSummary) ? full.evidenceSummary : [],
+          customerReply: full.customerReply ? String(full.customerReply) : '',
+          pendingItems: Array.isArray(full.pendingItems) ? full.pendingItems : [],
+          reviewStatus: task.review_status ?? (full.reviewStatus ? String(full.reviewStatus) : undefined),
+        }
+      : (record && typeof record.text === 'string' ? parseAnswerText(record.text) : null);
     res.setHeader('Cache-Control', 'no-store');
     res.json({
       task: {
@@ -73,9 +89,7 @@ export function mountShareRoutes(app: Express): void {
         finishedAt: task.finished_at,
         reviewStatus: task.review_status,
       },
-      answer: answer && typeof answer === 'object' && 'text' in (answer as Record<string, unknown>)
-        ? parseAnswerText(String((answer as Record<string, unknown>).text))
-        : answer,
+      answer: payload,
       feedback: db().getFeedback(task.id),
     });
   });
@@ -99,7 +113,7 @@ export function mountShareRoutes(app: Express): void {
  * 群里发的是格式化后的文本，但监控页存的是 { text }。
  * 这里把文本拆回结构化字段，供分享页按段展示。
  */
-function parseAnswerText(text: string): Record<string, unknown> {
+export function parseAnswerText(text: string): Record<string, unknown> {
   const sections: Record<string, string[]> = { conclusion: [], businessData: [], pendingItems: [] };
   let current: keyof typeof sections = 'conclusion';
   for (const raw of text.split('\n')) {
