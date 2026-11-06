@@ -1,0 +1,72 @@
+{
+  "name": "xkang-tui",
+  "version": "2.0.0",
+  "description": "Intelligent Customer Service & Troubleshooting Assistant with TUI based on Harness pattern",
+  "main": "dist/cli.js",
+  "type": "module",
+  "bin": {
+    "xhang": "dist/cli.js",
+    "xkang": "dist/cli.js"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.tsx",
+    "build": "npm run build:core && tsc",
+    "build:exe": "node scripts/build_exe.mjs",
+    "start": "node dist/cli.js",
+    "web": "tsx web/server.ts",
+    "bind": "tsx web/bind.tsx",
+    "typecheck": "npm run build:core && tsc --noEmit",
+    "test": "npm run build:core && node --import tsx --import ./tests/env_defaults.ts --test \"tests/server/*.test.ts\" \"tests/client/*.test.ts\"",
+    "test:integration": "node --import tsx --test \"tests/integration/*.it.test.ts\"",
+    "test:eval": "node --import tsx scripts/eval/business_acceptance.ts",
+    "eval:daily": "node --import tsx scripts/eval/daily_tickets.ts",
+    "test:ui": "node tests/ui/web_ui_snapshots.mjs",
+    "test:ui:frozen": "node tests/ui/web_ui_frozen_check.mjs",
+    "test:ui:sessions": "node tests/ui/real_sessions_check.mjs",
+    "test:ui:live": "node --import tsx tests/ui/web_ui_live_check.ts",
+    "ui:demo": "node --import tsx tests/helpers/web_ui_preview.ts 8694 --demo",
+    "typecheck:test": "npm run build:core && tsc -p tsconfig.test.json",
+    "build:core": "tsc -p packages/agent-core/tsconfig.json"
+  },
+  "keywords": [
+    "tui",
+    "ink",
+    "deepseek",
+    "gemini",
+    "grok",
+    "harness",
+    "codegraph",
+    "agent"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@google/genai": "^2.17.1",
+    "@larksuiteoapi/node-sdk": "^1.76.0",
+    "@modelcontextprotocol/sdk": "^1.11.0",
+    "@vscode/ripgrep": "^1.18.0",
+    "@xkang/agent-core": "file:packages/agent-core",
+    "chalk": "^6.0.0",
+    "commander": "^15.0.0",
+    "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
+    "ink": "^7.1.1",
+    "ink-select-input": "^6.2.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "mysql2": "^3.23.3",
+    "openai": "^7.4.0",
+    "react": "^19.2.8",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "png-to-ico": "^3.0.2",
+    "resedit": "^3.0.2",
+    "sharp": "^0.35.3",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  }
+}

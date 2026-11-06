@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>小康客服助手</title>
+  <link rel="icon" href="/favicon.png" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar" aria-label="会话">
+      <div class="brand">
+        <img src="/logo.png" alt="" class="brand-mark" width="28" height="28" />
+        <span class="brand-name">小康客服助手</span>
+      </div>
+
+      <button type="button" class="new-session" id="newSessionBtn">
+        <svg class="icon" aria-hidden="true"><use href="#i-plus" /></svg>
+        新建会话
+      </button>
+
+      <nav class="session-nav" id="sessionList" aria-label="历史会话"></nav>
+
+      <footer class="sidebar-foot">
+        <div class="me">
+          <span class="me-avatar" id="userAvatar" aria-hidden="true">客</span>
+          <span class="me-name" id="userName">客服专员</span>
+        </div>
+        <div class="foot-links">
+          <button type="button" class="text-btn" id="helpBtn">使用说明</button>
+          <button type="button" class="text-btn" id="versionBtn" title="检查更新">检查更新</button>
+        </div>
+      </footer>
+    </aside>
+    <div class="scrim" id="scrim"></div>
+
+    <main id="main">
+      <div class="update-banner" id="updateBanner" role="status" hidden>
+        <span class="update-text" id="updateBannerText"></span>
+        <button type="button" class="btn btn-small btn-light" id="doUpdateBtn">立即更新</button>
+        <button type="button" class="icon-btn" id="dismissUpdateBtn" aria-label="暂不更新" title="暂不更新">
+          <svg class="icon" aria-hidden="true"><use href="#i-x" /></svg>
+        </button>
+      </div>
+
+      <header class="topbar">
+        <button type="button" class="icon-btn menu-btn" id="menuBtn" aria-label="会话列表" aria-expanded="false">
+          <svg class="icon" aria-hidden="true"><use href="#i-menu" /></svg>
+        </button>
+        <h1 class="topbar-title" id="sessionTitle">新会话</h1>
+        <div class="conn" id="conn" data-state="checking" role="status">
+          <span class="conn-dot" aria-hidden="true"></span>
+          <span id="connText">正在连接…</span>
+        </div>
+      </header>
+
+      <div class="scroller" id="scroller">
+        <div class="column">
+          <section class="intake" id="welcome" aria-labelledby="intakeTitle">
+            <h2 class="intake-title" id="intakeTitle">把单号、报错或截图发给我</h2>
+            <p class="intake-lead">我会核对相关业务记录，给出经过复核的业务结论和必要信息，再附上一段可以回复客户的话术。</p>
+            <div class="examples">
+              <span class="examples-label">可以这样问</span>
+              <button type="button" class="example" data-prompt="订单 | 出单异常，帮我看看原因">订单（单号）出单异常，帮我看看原因</button>
+              <button type="button" class="example" data-action="attach">用户发来报错截图：先粘贴截图，再说一句现象</button>
+              <button type="button" class="example" data-prompt="打车订单 | 付了两次款，银行有两笔扣款，系统只记了一笔，查一下原因">打车订单付了两次款，系统只记了一笔</button>
+              <button type="button" class="example" data-prompt="|领导订票，我们这边都有谁能收到短信？从关联发送配置里查">某公司领导订票，我们这边谁能收到短信</button>
+            </div>
+            <p class="legend">
+              回答会注明核验状态：
+              <span class="seal-mini" data-v="reviewed">已复核</span>完成证据复核，
+              <span class="seal-mini" data-v="needs_human">需人工核实</span>仍有待核实事项，
+              <span class="seal-mini" data-v="unreviewed">未复核</span>尚未完成核验。
+            </p>
+          </section>
+          <div class="log" id="log" hidden></div>
+        </div>
+      </div>
+
+      <div class="composer-dock">
+        <div class="column">
+          <form class="composer" id="composer" autocomplete="off">
+            <div class="attachments" id="attachments" hidden></div>
+            <label class="sr-only" for="input">输入问题</label>
+            <textarea id="input" rows="1" placeholder="输入单号、报错文案或问题，Ctrl+V 可粘贴截图"></textarea>
+            <div class="composer-bar">
+              <input type="file" id="fileInput" multiple accept="image/*,.log,.txt,.json,.md,.sql,.csv,.xml,.yml,.yaml" hidden />
+              <button type="button" class="icon-btn" id="attachBtn" aria-label="添加截图或日志文件" title="添加截图或日志文件">
+                <svg class="icon" aria-hidden="true"><use href="#i-clip" /></svg>
+              </button>
+              <span class="composer-hint">Enter 发送，Shift+Enter 换行</span>
+              <button type="submit" class="send-btn" id="sendBtn" aria-label="发送" disabled>
+                <svg class="icon" aria-hidden="true"><use href="#i-send" /></svg>
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div class="modal" id="feedbackModal" role="dialog" aria-modal="true" aria-labelledby="feedbackTitle" hidden>
+    <div class="modal-card">
+      <h2 id="feedbackTitle">反馈回答有误</h2>
+      <div class="field">
+        <span class="field-label" id="feedbackTypeLabel">哪里不对</span>
+        <div class="choice-group" role="radiogroup" aria-labelledby="feedbackTypeLabel">
+          <button type="button" class="choice is-on" role="radio" aria-checked="true" data-type="排障结论错误">结论错误</button>
+          <button type="button" class="choice" role="radio" aria-checked="false" data-type="金额/账单对账不符">数据对不上</button>
+          <button type="button" class="choice" role="radio" aria-checked="false" data-type="无法识别报错截图">没看懂截图</button>
+          <button type="button" class="choice" role="radio" aria-checked="false" data-type="其他异常或建议">其他</button>
+        </div>
+      </div>
+      <label class="field">
+        <span class="field-label">具体情况</span>
+        <textarea id="feedbackText" rows="4" placeholder="例如：这个订单实际已经退款，回答却说没有退款记录"></textarea>
+      </label>
+      <p class="modal-note" id="feedbackContextTip">会附带本次会话的提问、排查过程和回答，方便技术同事核查。</p>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="button" class="btn btn-primary" id="feedbackSubmit">提交反馈</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="helpModal" role="dialog" aria-modal="true" aria-labelledby="helpTitle" hidden>
+    <div class="modal-card">
+      <h2 id="helpTitle">使用说明</h2>
+      <dl class="help-list">
+        <dt>直接给单号</dt>
+        <dd>订单号、票号、PNR 都可以。助手会核对相关业务记录。回答里的单号点一下就能复制。</dd>
+        <dt>粘贴截图</dt>
+        <dd>在输入框里按 Ctrl+V 粘贴用户的报错截图，再补一句现象，比如“提交退票一直转圈”。</dd>
+        <dt>看印章判断把握</dt>
+        <dd>“已复核”表示完成证据核验；“需人工核实”表示仍有待确认事项；“未复核”表示尚未完成核验。请结合当前业务范围使用结论。</dd>
+        <dt>复制话术</dt>
+        <dd>“客服话术”下面有“复制话术”按钮，可以直接发给客户。</dd>
+        <dt>排查过程</dt>
+        <dd>回答上方的“排查过程”显示业务核对进度。答案保留工作所需的完整业务信息，内部技术资料由服务端管理。</dd>
+        <dt>修改操作要你批准</dt>
+        <dd>需要改文件或执行命令时会先出现确认卡片，你批准后才会执行。</dd>
+        <dt>回答不对</dt>
+        <dd>点回答下方的“回答有误”，会连同这次会话一起提交给技术同事核查。</dd>
+      </dl>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="checkUpdateBtn">检查更新</button>
+        <button type="button" class="btn btn-primary" data-close>知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal modal-image" id="imageModal" role="dialog" aria-modal="true" aria-label="查看截图" hidden>
+    <img id="imageModalImg" alt="截图" />
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" /></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.3 3.3 0 014.7 4.7l-8.6 8.6a1.7 1.7 0 01-2.4-2.4l7.9-7.9" /></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6" /></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" /></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M7 12h10" /></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 7.5v6M12 16.8v.2" /><circle cx="12" cy="12" r="9" /></symbol>
+    <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.2" /></symbol>
+    <symbol id="i-think" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 00-3.5 10.9c.6.5 1 1.2 1 2V16h5v-.1c0-.8.4-1.5 1-2A6 6 0 0012 3z" /></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V6a2 2 0 012-2h9" /></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3" /></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4h11l-2 4 2 4H5" /></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M12 7.5V12l3 2" /></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 10-2.6 5.9M20 5v5h-5" /></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" /><path d="M14 3v5h5" /></symbol>
+  </svg>
+
+  <script src="/answer.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
