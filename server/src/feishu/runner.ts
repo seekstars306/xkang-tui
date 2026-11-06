@@ -206,28 +206,41 @@ export class HttpAgentRunner implements AgentRunner {
   }
 
   /**
-   * 给群里的简短回复：结论 + 关键数据 + 待确认。
-   * 群消息不适合贴长篇依据，完整内容留给详情页。
+   * 给群里的回复。
+   *
+   * 默认只放结论：业务信息、依据、待确认都在详情页（分享链接）里，
+   * 全贴到群里既刷屏，又容易被人复制走不完整的片段。
+   * FEISHU_REPLY_DETAIL=full 可回到旧行为（结论 + 业务信息 + 待确认）。
+   *
+   * 简洁模式下仍保留取值是链接的业务信息：导出文件的下载链接就是交付物本身，
+   * 让人多点一次详情页才拿到文件，比多一行文字更糟。
    */
   private format(answer: PublicAnswerLike, issueId: string): string {
+    const detail = (process.env.FEISHU_REPLY_DETAIL || 'concise').trim().toLowerCase();
     const lines = [`【结论】`];
     // 模型的结论原样转达；只有真的空着时才用兜底句
     lines.push(answer.conclusion || '本次未形成可直接采信的结论。');
-    const data = (answer.businessData ?? []).slice(0, 6);
+    const all = answer.businessData ?? [];
+    const data = detail === 'full'
+      ? all.slice(0, 6)
+      : all.filter(item => /https?:\/\//.test(String(item.value ?? ''))).slice(0, 3);
     if (data.length) {
       lines.push('', '【业务信息】');
       for (const item of data) lines.push(`${item.label}：${item.value}`);
     }
-    const pending = (answer.pendingItems ?? []).slice(0, 4);
-    if (pending.length) {
-      lines.push('', '【还需确认】');
-      for (const item of pending) lines.push(`· ${item}`);
+    if (detail === 'full') {
+      const pending = (answer.pendingItems ?? []).slice(0, 4);
+      if (pending.length) {
+        lines.push('', '【还需确认】');
+        for (const item of pending) lines.push(`· ${item}`);
+      }
     }
+    // 复核未完成的警示不是内容，是安全提示：不能因为求简洁去掉，
+    // 否则没复核过的结论看起来和复核过的一样。
     if (answer.reviewStatus === 'needs_human') lines.push('', '（本结论尚未完成自动复核，建议二线核实后再答复客户。）');
     lines.push('', `问题编号 ${issueId}`);
     return lines.join('\n');
   }
-
   private async json<T>(url: string, init: RequestInit): Promise<T | null> {
     const res = await fetch(url, {
       ...init,
