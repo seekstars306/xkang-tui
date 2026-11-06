@@ -1,0 +1,130 @@
+{
+  "note": "规则层冻结清单。每条 entry 都是『从真实工单抽出来的措辞或词表』(ticket_derived) 或『通用流程/交付策略』(general_procedure/delivery_policy)。tests/server/rule_freeze.test.ts 逐条断言 anchor 仍逐字出现在源文件里，并对 word_table 断言词表逐字不变、对角色类新增词做守门。新增一条规则必须同时在这里登记——登记本身就是留痕。",
+  "frozenAt": "2026-10-16",
+  "ticketDerivedCount": 9,
+  "classes": ["ticket_derived", "general_procedure", "delivery_policy", "infrastructure"],
+  "unfreezeCondition": "任一 ticket_derived 条目的去留，必须等留出集（tests/eval/data/tickets/，git 忽略）上有对照数据之后再定；在此之前只允许新增 general_procedure（通用工程动作，且不得引入工单专有词表），不允许再新增 ticket_derived。",
+  "ticketDerivedExceptions": [
+    "2026-10-20 review.system_completion_claim：这是封堵一个『检查从未执行』的实现缺陷（按 block.kind 判，而该 kind 从未被填过），不是给某道题加措辞；回放 19 次运行只多拦截 2 条断言、0 条误伤，已核过边界。",
+    "2026-10-20 publication.label_latin_abbreviation：这是放宽一条格式校验（PNR 这类通用缩写），方向是减少误拦而非增加工单专有词表；同一张票修复前后重跑已对照。",
+    "两条都属于『把已证实的失败模式封堵』，按 unfreezeCondition 的字面要求应当等留出集，这里记为有意的例外并留痕；留出集到位后两者都要重新评估去留。"
+  ],
+  "clientTwinCheck": "2026-10-16 grep 核对：src/harness/system_prompt.ts（客户端同名构建器）不含规则层文本（无『工作原则』『重复、并发』『修订纪律』），故无需镜像条目；若将来镜像过去，必须在这里补 entry。",
+  "infrastructureNote": "以下属于代码路径修复、由行为测试而非本清单守住，故不进 entries：evidenceContainsQuote 的逗号形态归一化（tests/server/partial_publish.test.ts 与 review_fixes.test.ts 各有一条）、R1 的逐句保留与 PARTIAL_REPLY_* 话术（partial_publish.test.ts）。",
+  "entries": [
+    {
+      "id": "review.actor_role_word_table",
+      "class": "ticket_derived",
+      "file": "server/src/agent/review.ts",
+      "anchor": "UNAUTHORED_ACTOR_ROLE",
+      "kind": "word_table",
+      "words": ["开票经办人", "经办人", "操作人", "提交人", "财务"],
+      "provenance": "2026-10-16 酒店重复开票会话：证据只给 kpr/开票人、user_name 这类字段值，初稿把动作主体写成『财务已…』；这张词表只覆盖该单出现过的称谓。"
+    },
+    {
+      "id": "review.prompt.cause_assertion",
+      "class": "ticket_derived",
+      "file": "server/src/agent/review.ts",
+      "anchor": "因果与机制类断言",
+      "provenance": "同一张工单：初稿用『相隔 12 秒连续提交』当成因，证据里没有请求来源、日志或代码分支。"
+    },
+    {
+      "id": "review.prompt.actor_role",
+      "class": "ticket_derived",
+      "file": "server/src/agent/review.ts",
+      "anchor": "动作主体的角色称谓",
+      "provenance": "同一张工单的角色称谓问题（含状态枚举被说成别的动作词）。"
+    },
+    {
+      "id": "review.revision_discipline",
+      "class": "ticket_derived",
+      "file": "server/src/agent/review.ts",
+      "anchor": "【修订纪律】",
+      "provenance": "同一张工单：初稿把事实与成因写在同句里，整段被作废，客户最后什么都没拿到；改成逐句判定 + 通过修订反馈回给模型。"
+    },
+    {
+      "id": "review.revision_discipline.no_time_inference",
+      "class": "ticket_derived",
+      "file": "server/src/agent/review.ts",
+      "anchor": "不得用时间间隔、记录条数或经办人、创建人字段反推成因",
+      "provenance": "同一张工单：12 秒间隔与记录条数被拿来反推成因。"
+    },
+    {
+      "id": "service.business_prompt.cause_discipline",
+      "class": "ticket_derived",
+      "file": "server/src/agent/service.ts",
+      "anchor": "每条断言自成一句完整短句",
+      "provenance": "同一张工单：BUSINESS_PROMPT 里的成因纪律与拆句要求。"
+    },
+    {
+      "id": "investigation.prompt.repeat_branch_rule",
+      "class": "ticket_derived",
+      "file": "server/src/agent/investigation_prompt.ts",
+      "anchor": "重复、并发类怀疑必须读到判定分支",
+      "provenance": "同一张工单：工作原则 8，要求读到真正做去重/幂等判断的分支。"
+    },
+    {
+      "id": "investigation.prompt.repeat_steps",
+      "class": "general_procedure",
+      "file": "server/src/agent/investigation_prompt.ts",
+      "anchor": "【重复、并发类问题的排查步骤】",
+      "provenance": "2026-10-16（第 4 项）：把『没证据就写未定位』变成『去哪里读分支』的四步通用动作，仅 l2 注入。判效看工具调用分布，不看措辞。"
+    },
+    {
+      "id": "review.directed_followup",
+      "class": "general_procedure",
+      "file": "server/src/agent/review.ts",
+      "anchor": "【定向补查】",
+      "provenance": "2026-10-16（第 4 项）：复核把补查步骤通过既有修订通道回给模型，仅当成因类断言没过核实时追加，不新增词表。"
+    },
+    {
+      "id": "publication.partial_reply_template",
+      "class": "delivery_policy",
+      "file": "server/src/agent/publication.ts",
+      "anchor": "PARTIAL_REPLY_TEMPLATE",
+      "provenance": "R1 逐句发布（默认关）：全部断言都不通过时的整体话术。"
+    },
+    {
+      "id": "publication.partial_reply_suffix",
+      "class": "delivery_policy",
+      "file": "server/src/agent/publication.ts",
+      "anchor": "PARTIAL_REPLY_SUFFIX",
+      "provenance": "R1 逐句发布：部分断言通过时追加的待核实话术。"
+    },
+    {
+      "id": "publication.partial_reply_wording",
+      "class": "delivery_policy",
+      "file": "server/src/agent/publication.ts",
+      "anchor": "其余事项仍在核实中",
+      "provenance": "R1 逐句发布：话术正文本身（改这句等于改交付承诺，需同步上面两条）。"
+    },
+    {
+      "id": "publication.label_latin_abbreviation",
+      "class": "ticket_derived",
+      "file": "server/src/agent/publication.ts",
+      "anchor": "isLatinAbbreviationLabel",
+      "provenance": "2026-10-20 客票 9999204322942（改签 0 元、详情/导出收款状态不一致）：businessData 里有一个 label 是 \"PNR\"，不含汉字，触发『业务字段必须使用中文名称』抛错。复核因此从未进入内容审核，两轮都停在格式关，把一份已查清『详情读业务表、导出读财务表』的答案降级成『本次尚未形成可直接采信的业务结论』。同一张票修复重跑后拿到了实质结论，说明这是产能而非措辞问题。放行范围刻意收窄到 2~6 位全大写缩写，Order No / receivable_state 之类仍然拒绝。"
+    },
+    {
+      "id": "review.system_completion_claim",
+      "class": "ticket_derived",
+      "file": "server/src/agent/review.ts",
+      "anchor": "SYSTEM_COMPLETION_CLAIM",
+      "provenance": "2026-10-17 酒店重复开票会话（G3D-Q3-new）：客服话术写『相关技术问题研发已进行修复』，所引证据只有一条提交标题含『修复』二字的 git 记录。旧实现只在 block.kind === 'performed_action' 时才查动作记录，而 445 条断言里 0 条填过该值，等于这道检查从未执行。改为完成态声明无条件检查；边界是『已退款 303 元』这类有库记录的业务事实仍按 kind 判，不能一起拦（2026-10-20 回放 R6 确认）。"
+    },
+    {
+      "id": "review.observed_branch.rule",
+      "class": "general_procedure",
+      "file": "server/src/agent/observed_branch.ts",
+      "anchor": "【材料原文可确认分支】",
+      "provenance": "2026-10-29 a12c3554：复核口径开关 REVIEW_OBSERVED_BRANCH，默认关闭，只用于对照实验，是否上线要看对照数据。真实案例里截图顶部文案只在代码三元表达式的某一分支渲染，第一稿据此说明了成因，复核却以『无证据证明当时走的是该分支』打回，修订纪律又迫使改成『成因尚未定位』，最后发布的是空结论且标为已复核。开启时这条口径追加在复核两阶段 system 末尾：材料原文唯一对应某分支即为该分支被执行的直接证据，按逐环核验判定；不新增词表，时间间隔、记录条数与字段反推成因的限制不变。"
+    },
+    {
+      "id": "review.observed_branch.revision",
+      "class": "general_procedure",
+      "file": "server/src/agent/observed_branch.ts",
+      "anchor": "5. 例外：材料原文",
+      "provenance": "2026-10-29 a12c3554：同一开关 REVIEW_OBSERVED_BRANCH，默认关闭，只用于对照实验，是否上线要看对照数据。开启时接在【修订纪律】第 4 条之后，作为第 2 条『只能写成成因尚未定位』的例外：材料原文唯一对应某分支时，成因逐环引用后可以保留，只缺前提时写成带前提的说明。REVISION_DISCIPLINE 原文一个字不改，例外只追加。"
+    }
+  ]
+}

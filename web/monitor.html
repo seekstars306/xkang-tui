@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>飞书监控台</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, "Microsoft YaHei", sans-serif; background:#f5f6f8; color:#1f2329; font-size:14px; }
+  header { background:#fff; border-bottom:1px solid #e5e6eb; padding:14px 20px; display:flex; align-items:center; gap:24px; position:sticky; top:0; z-index:10; }
+  header h1 { margin:0; font-size:17px; font-weight:600; }
+  .stats { display:flex; gap:18px; font-size:13px; color:#4e5969; }
+  .stats b { font-weight:600; }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+  .dot.run { background:#00b42a; } .dot.queue { background:#ff7d00; } .dot.done { background:#86909c; }
+  main { display:flex; height:calc(100vh - 57px); }
+  aside { width:210px; background:#fff; border-right:1px solid #e5e6eb; padding:14px; overflow-y:auto; flex-shrink:0; }
+  aside h3 { font-size:12px; color:#86909c; margin:14px 0 6px; font-weight:600; letter-spacing:.5px; }
+  aside h3:first-child { margin-top:0; }
+  .filter-item { padding:6px 8px; border-radius:4px; cursor:pointer; color:#4e5969; font-size:13px; display:flex; justify-content:space-between; }
+  .filter-item:hover { background:#f2f3f5; }
+  .filter-item.active { background:#e8f3ff; color:#165dff; font-weight:500; }
+  .filter-item span { color:#86909c; font-size:12px; }
+  .list { width:340px; background:#fff; border-right:1px solid #e5e6eb; overflow-y:auto; flex-shrink:0; }
+  .task { padding:12px 14px; border-bottom:1px solid #f2f3f5; cursor:pointer; }
+  .task:hover { background:#fafbfc; }
+  .task.active { background:#e8f3ff; border-left:3px solid #165dff; padding-left:11px; }
+  .task-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; }
+  .task-meta { font-size:12px; color:#86909c; display:flex; gap:8px; margin-bottom:4px; }
+  .task-preview { font-size:12px; color:#4e5969; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .badge { font-size:11px; padding:1px 6px; border-radius:3px; font-weight:500; }
+  .badge.running { background:#e8ffea; color:#00b42a; }
+  .badge.queued { background:#fff7e8; color:#ff7d00; }
+  .badge.done { background:#f2f3f5; color:#4e5969; }
+  .badge.failed, .badge.timeout { background:#ffece8; color:#f53f3f; }
+  .detail { flex:1; overflow-y:auto; padding:18px 22px; }
+  .empty { color:#86909c; text-align:center; margin-top:80px; font-size:13px; }
+  .detail h2 { font-size:15px; margin:0 0 12px; font-weight:600; }
+  .kv { display:grid; grid-template-columns: 96px 1fr; gap:6px 12px; font-size:13px; margin-bottom:16px; }
+  .kv dt { color:#86909c; } .kv dd { margin:0; word-break:break-all; }
+  .tabs { display:flex; gap:2px; border-bottom:1px solid #e5e6eb; margin-bottom:14px; }
+  .tab { padding:7px 14px; cursor:pointer; font-size:13px; color:#4e5969; border-bottom:2px solid transparent; }
+  .tab.active { color:#165dff; border-bottom-color:#165dff; font-weight:500; }
+  .pane { display:none; } .pane.active { display:block; }
+  pre { background:#f7f8fa; border:1px solid #e5e6eb; border-radius:5px; padding:12px; overflow-x:auto; font-size:12.5px; line-height:1.65; white-space:pre-wrap; word-break:break-word; margin:0; font-family:ui-monospace,Consolas,monospace; }
+  .step { border-left:2px solid #e5e6eb; padding:0 0 14px 14px; position:relative; }
+  .step:last-child { border-left-color:transparent; padding-bottom:0; }
+  .step::before { content:''; position:absolute; left:-5px; top:3px; width:8px; height:8px; border-radius:50%; background:#c9cdd4; }
+  .step.answer::before { background:#00b42a; } .step.model::before { background:#165dff; }
+  .step-time { font-size:11px; color:#86909c; }
+  .step-title { font-size:13px; margin:2px 0; font-weight:500; }
+  .step-detail { font-size:12px; color:#4e5969; margin-top:3px; }
+  .toolbar { display:flex; gap:8px; margin-bottom:12px; }
+  button { padding:5px 12px; border:1px solid #d9dce1; background:#fff; border-radius:4px; cursor:pointer; font-size:12.5px; color:#1f2329; }
+  button:hover { border-color:#165dff; color:#165dff; }
+  .token-box { padding:16px; max-width:520px; margin:60px auto; background:#fff; border-radius:8px; border:1px solid #e5e6eb; }
+  .token-box input { width:100%; padding:9px 11px; border:1px solid #d9dce1; border-radius:4px; font-size:13px; margin:10px 0; }
+  .token-box p { color:#86909c; font-size:12.5px; margin:0 0 6px; }
+  .viewtabs { display:flex; gap:4px; background:#f2f3f5; padding:3px; border-radius:6px; }
+  .vtab { padding:5px 12px; border-radius:4px; font-size:13px; color:#4e5969; cursor:pointer; user-select:none; }
+  .vtab:hover { color:#165dff; }
+  .vtab.active { background:#fff; color:#165dff; font-weight:500; box-shadow:0 1px 2px rgba(0,0,0,.06); }
+  .console { flex:1; overflow-y:auto; padding:18px 22px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:14px; margin-bottom:16px; }
+  .card { background:#fff; border:1px solid #e5e6eb; border-radius:8px; padding:14px 16px; }
+  .card h3 { margin:0 0 10px; font-size:13px; font-weight:600; display:flex; align-items:center; gap:8px; }
+  .card .kv { margin-bottom:0; }
+  .btnrow { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+  button.primary { background:#165dff; border-color:#165dff; color:#fff; }
+  button.primary:hover { background:#0e4fd4; color:#fff; }
+  button.danger { color:#f53f3f; border-color:#ffccc7; }
+  button.danger:hover { background:#fff1f0; border-color:#f53f3f; color:#f53f3f; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .pill { font-size:11px; padding:1px 7px; border-radius:10px; font-weight:500; }
+  .pill.up { background:#e8ffea; color:#00b42a; } .pill.down { background:#f2f3f5; color:#86909c; }
+  .pill.warn { background:#fff7e8; color:#ff7d00; } .pill.restart { background:#e8f3ff; color:#165dff; }
+  .notice { border-radius:6px; padding:10px 12px; font-size:12.5px; margin-bottom:12px; }
+  .notice.warn { background:#fff7e8; color:#ad4e00; border:1px solid #ffd8b5; }
+  .notice.err { background:#ffece8; color:#cb2634; border:1px solid #fdcdc5; }
+  .notice.ok { background:#e8ffea; color:#00821d; border:1px solid #b7eb8f; }
+  .cfggroup { margin-bottom:18px; }
+  .cfggroup > h4 { margin:0 0 8px; font-size:12px; color:#86909c; font-weight:600; }
+  .cfgrow { display:grid; grid-template-columns:190px 1fr; gap:10px; align-items:center; padding:5px 0; border-bottom:1px solid #f7f8fa; }
+  .cfgrow label { font-size:12.5px; color:#1f2329; }
+  .cfgrow .hint { display:block; font-size:11px; color:#86909c; margin-top:2px; }
+  .cfgrow input, .cfgrow select { width:100%; padding:5px 8px; border:1px solid #d9dce1; border-radius:4px; font-size:12.5px; font-family:inherit; }
+  .cfgrow input:disabled, .cfgrow select:disabled { background:#f7f8fa; color:#86909c; }
+  .cfgrow .meta { font-size:11px; color:#86909c; }
+  .audit { font-family:ui-monospace,Consolas,monospace; font-size:11.5px; white-space:pre-wrap; word-break:break-all; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const S = { token: localStorage.getItem('feishu_admin_token') || '', stats:null, tasks:[], active:null, detail:null, tab:'input', filter:{ status:'', chatId:'', requester:'' }, chats:[], requesters:[], view:'tasks', console:null, consoleErr:'', saving:false, saved:'', serverStopped:false, stopCmd:'', starting:'', mcp:null, mcpErr:'', mcpBusy:'' };
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtTime = t => t ? new Date(t).toLocaleString('zh-CN', { hour12:false }) : '—';
+const fmtDur = ms => { if(!ms) return '—'; const s=Math.round(ms/1000); return s<60 ? s+'s' : Math.floor(s/60)+'m'+(s%60)+'s'; };
+const statusText = { running:'运行中', queued:'排队中', done:'已完成', failed:'失败', timeout:'超时' };
+
+async function api(path){
+  // 会话在 HttpOnly Cookie 里，前端不接触任何凭据
+  const r = await fetch('/admin/feishu' + path, { credentials: 'same-origin' });
+  if (r.status === 401) { location.href = '/admin/feishu/login'; throw new Error('unauthorized'); }
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+async function load(){
+  try {
+    const [stats, filters, tasks] = await Promise.all([api('/stats'), api('/filters'), api('/tasks?limit=60')]);
+    S.stats = stats; S.chats = filters.chats; S.requesters = filters.requesters; S.tasks = tasks;
+    if (S.active) await openTask(S.active, true);
+    render();
+  } catch (e) {
+    if (String(e.message).includes('unauthorized')) location.href = '/admin/feishu/login';
+  }
+}
+
+async function openTask(id, silent){
+  S.active = id;
+  try { S.detail = await api('/tasks/' + encodeURIComponent(id)); } catch { S.detail = null; }
+  if (!silent) render();
+}
+
+function render(){
+  const st = S.stats || { running:0, queued:0, todayDone:0, total:0 };
+  const list = S.tasks.filter(t => (!S.filter.status || t.status === S.filter.status)
+    && (!S.filter.chatId || t.chatId === S.filter.chatId)
+    && (!S.filter.requester || t.requesterOpenId === S.filter.requester));
+
+  $('#app').innerHTML = `
+    <header>
+      <h1>飞书监控台</h1>
+      <div class="stats">
+        <span><i class="dot run"></i>运行中 <b>${st.running}</b></span>
+        <span><i class="dot queue"></i>排队 <b>${st.queued}</b></span>
+        <span><i class="dot done"></i>今日完成 <b>${st.todayDone}</b></span>
+        <span>累计 <b>${st.total}</b></span>
+      </div>
+      <div class="viewtabs">
+        <span class="vtab ${S.view==='tasks'?'active':''}" data-view="tasks">任务监控</span>
+        <span class="vtab ${S.view==='console'?'active':''}" data-view="console">服务端控制台</span>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <span style="font-size:12px;color:#86909c" id="whoami"></span>
+        <button id="refresh">刷新</button>
+        <button id="logout">退出</button>
+      </div>
+    </header>
+    <main>
+      ${S.view==='console' ? renderConsole() : `
+      <aside>
+        <h3>状态</h3>
+        <div class="filter-item ${!S.filter.status?'active':''}" data-f="status" data-v="">全部 <span>${S.tasks.length}</span></div>
+        ${['running','queued','done','failed'].map(s => `<div class="filter-item ${S.filter.status===s?'active':''}" data-f="status" data-v="${s}">${statusText[s]} <span>${S.tasks.filter(t=>t.status===s).length}</span></div>`).join('')}
+        <h3>群组</h3>
+        <div class="filter-item ${!S.filter.chatId?'active':''}" data-f="chatId" data-v="">全部</div>
+        ${S.chats.map(c => `<div class="filter-item ${S.filter.chatId===c.chat_id?'active':''}" data-f="chatId" data-v="${esc(c.chat_id)}">${esc(c.chat_name||c.chat_id.slice(0,10))} <span>${c.n}</span></div>`).join('')}
+        <h3>客服</h3>
+        <div class="filter-item ${!S.filter.requester?'active':''}" data-f="requester" data-v="">全部</div>
+        ${S.requesters.map(r => `<div class="filter-item ${S.filter.requester===r.requester_open_id?'active':''}" data-f="requester" data-v="${esc(r.requester_open_id)}">${esc(r.requester_name||r.requester_open_id.slice(0,10))} <span>${r.n}</span></div>`).join('')}
+      </aside>
+      <div class="list">
+        ${list.length ? list.map(t => `
+          <div class="task ${S.active===t.id?'active':''}" data-id="${esc(t.id)}">
+            <div class="task-top">
+              <span class="badge ${t.status}">${statusText[t.status]||t.status}</span>
+              <span style="font-size:11px;color:#86909c">${fmtDur(t.durationMs)}</span>
+            </div>
+            <div class="task-meta"><span>${esc(t.chatName||t.chatId.slice(0,12))}</span><span>${esc(t.requesterName||'—')}</span></div>
+            <div class="task-preview">${esc(t.preview||'(无输入)')}</div>
+          </div>`).join('') : '<div class="empty">还没有任务。在群里 @ 机器人试试。</div>'}
+      </div>
+      <div class="detail">${renderDetail()}</div>
+      `}
+    </main>`;
+
+  document.querySelectorAll('.filter-item').forEach(el => el.onclick = () => {
+    S.filter[el.dataset.f] = el.dataset.v; render();
+  });
+  document.querySelectorAll('.task').forEach(el => el.onclick = () => openTask(el.dataset.id));
+  document.querySelectorAll('.vtab').forEach(el => el.onclick = () => { S.view = el.dataset.view; if (S.view==='console') loadConsole(); render(); });
+  bindConsole();
+  const rb = $('#refresh'); if (rb) rb.onclick = load;
+  const lb = $('#logout');
+  if (lb) lb.onclick = async () => {
+    await fetch('/admin/feishu/logout', { method:'POST', credentials:'same-origin' });
+    location.href = '/admin/feishu/login';
+  };
+  document.querySelectorAll('.tab').forEach(el => el.onclick = () => { S.tab = el.dataset.tab; render(); });
+  const copy = $('#copyInput'); if (copy) copy.onclick = () => { navigator.clipboard.writeText(S.detail?.task?.inputText || ''); copy.textContent='已复制'; };
+}
+
+
+/* ---------------- 服务端控制台 ---------------- */
+
+async function loadConsole(){
+  if (S.starting) { render(); return; }
+  if (S.serverStopped) { render(); return; }
+  try {
+    const [status, config, mcp] = await Promise.all([api('/console/status'), api('/console/config'), api('/console/mcp').catch(() => ({ services: [] }))]);
+    S.console = { status, config }; S.consoleErr = ''; S.mcp = mcp; S.mcpErr = '';
+  } catch (e) { S.consoleErr = String(e.message || e); }
+  render();
+}
+
+function fmtUptime(sec){
+  if (sec == null) return '—';
+  const d = Math.floor(sec/86400), h = Math.floor(sec%86400/3600), m = Math.floor(sec%3600/60), s2 = sec%60;
+  return (d? d+'天':'') + (h? h+'小时':'') + (m? m+'分':'') + s2 + '秒';
+}
+
+function restartStateText(state){
+  return ({ waiting:'等待旧服务端退出', started:'新服务端已启动', failed:'重启失败', scheduled:'已安排重启' })[state] || state || '—';
+}
+
+function renderConsole(){
+  const c = S.console;
+  if (S.consoleErr) return '<div class="console"><div class="notice err">控制台数据加载失败：' + esc(S.consoleErr) + '</div></div>';
+  if (!c) return '<div class="console"><div class="empty">正在加载控制台…</div></div>';
+  const s = c.status.server, b = c.status.bridge, inflight = c.status.inFlight || [];
+  const rs = c.status.restart;
+
+  const serverUp = !S.serverStopped;
+  const serverCard =
+    '<div class="card">' +
+      '<h3>xkang 服务端 <span class="pill ' + (serverUp?'up':'down') + '">' + (serverUp?'运行中':'未运行') + '</span></h3>' +
+      (serverUp
+        ? '<dl class="kv">' +
+            '<dt>进程</dt><dd>PID ' + s.pid + ' · ' + esc(s.platform) + ' · Node ' + esc(s.node) + '</dd>' +
+            '<dt>已运行</dt><dd>' + fmtUptime(s.uptimeSeconds) + '</dd>' +
+            '<dt>工作目录</dt><dd>' + esc(s.cwd) + '</dd>' +
+            '<dt>监听</dt><dd>' + esc(String(s.port)) + '</dd>' +
+            '<dt>复核模式</dt><dd><span class="pill ' + (s.reviewMode==='off'?'down':'warn') + '">' + esc(s.reviewMode) + '</span></dd>' +
+            '<dt>推理档位</dt><dd>' + esc(s.reasoningEffort) + '</dd>' +
+            '<dt>上下文阈值</dt><dd>' + esc(String(s.contextTokens)) + '</dd>' +
+            '<dt>代码库路径</dt><dd>' + esc(s.codeRepoPath) + '</dd>' +
+            '<dt>调度模型</dt><dd>' + esc(s.activeModel) + '</dd>' +
+          '</dl>' +
+          '<div class="btnrow">' +
+            '<button id="btnServerRestart"' + (S.starting?' disabled':'') + '>' + (S.starting==='restart'?'重启中…':'重启服务端') + '</button>' +
+            '<button class="danger" id="btnServerStop"' + (S.starting?' disabled':'') + '>停止服务端</button>' +
+          '</div>' +
+          (S.starting ? '<div style="font-size:12px;color:#165dff;margin-top:8px" id="startProgress">正在' + (S.starting==='restart'?'重启':'启动') + '，服务端通常需要 10-30 秒…</div>' : '') +
+          '<div style="font-size:11px;color:#86909c;margin-top:8px">重启会中断所有在途排查，有任务时接口会先拒绝；停止后本页面也随之不可用。</div>'
+        : '<div style="font-size:12.5px;color:#4e5969;padding:6px 0">服务端已按控制台指令停止，未自动拉起。恢复命令：<code style="background:#f7f8fa;padding:2px 6px;border-radius:3px">' + esc(S.stopCmd || 'pwsh scripts/start_production.ps1') + '</code></div>' +
+          '<div class="btnrow"><button class="primary" id="btnServerStart"' + (S.starting?' disabled':'') + '>' + (S.starting==='start'?'启动中…':'启动服务端') + '</button></div>' +
+          (S.starting ? '<div style="font-size:12px;color:#165dff;margin-top:8px">正在启动，服务端通常需要 10-30 秒…</div>' : '') +
+          '<div style="font-size:11px;color:#86909c;margin-top:8px">停止后页面连不上服务端，启动会改走接棒小服务（8601）完成；接棒也不在时才需要用命令恢复。</div>') +
+    '</div>';
+
+  const bridgeCard =
+    '<div class="card">' +
+      '<h3>飞书桥 <span class="pill ' + (b.running?'up':'down') + '">' + (b.running?'运行中':'未运行') + '</span></h3>' +
+      '<dl class="kv">' +
+        '<dt>进程</dt><dd>' + (b.pid ? 'PID ' + b.pid : '—') + '</dd>' +
+        '<dt>启动时间</dt><dd>' + fmtTime(b.startedAt) + '</dd>' +
+      '</dl>' +
+      '<div class="btnrow">' + (b.running
+        ? '<button id="btnBridgeRestart">重启飞书桥</button><button class="danger" id="btnBridgeStop">停止飞书桥</button>'
+        : '<button class="primary" id="btnBridgeStart">启动飞书桥</button>') + '</div>' +
+      '<div style="font-size:11px;color:#86909c;margin-top:8px">停止飞书桥不影响服务端与监控台，但群里 @ 不会得到响应。</div>' +
+    '</div>';
+
+  const inflightCard =
+    '<div class="card">' +
+      '<h3>在途排查 <span class="pill ' + (inflight.length?'warn':'down') + '">' + inflight.length + '</span></h3>' +
+      (inflight.length
+        ? '<div class="notice warn">有 ' + inflight.length + ' 个排查正在进行。重启服务端或停止飞书桥会中断它们，接口默认拒绝，确认后才能继续。</div>'
+        : '<div style="font-size:12.5px;color:#86909c">当前没有进行中的排查。</div>') +
+      (inflight.length ? inflight.map(t => '<div style="font-size:12px;padding:4px 0;border-bottom:1px solid #f7f8fa">'
+        + '<span class="badge ' + esc(t.status) + '">' + esc(t.status) + '</span> ' + esc(t.chatName || t.id) + ' · ' + esc(t.preview || '') + '</div>').join('') : '') +
+    '</div>';
+
+  const rsLive = Boolean(rs && rs.stale);
+  const restartCard =
+    '<div class="card"><h3>重启状态 <span class="pill ' + (rsLive ? 'up' : (rs && rs.state==='started' ? 'up' : rs && rs.state==='failed' ? 'warn' : 'restart')) + '">' + (rsLive ? '服务端运行中' : esc(restartStateText(rs && rs.state))) + '</span></h3>' +
+      (rs
+        ? (rsLive ? '<div style="font-size:12.5px;color:#4e5969;margin-bottom:8px">服务端正在运行，下面是上次通过控制台做过的操作，仅作历史记录。</div>' : '')
+        + '<dl class="kv">'
+          + (rsLive ? '' : '<dt>状态</dt><dd><span class="pill ' + (rs.state==='started'?'up':rs.state==='failed'?'warn':'restart') + '">' + esc(restartStateText(rs.state)) + '</span></dd>')
+          + '<dt>时间</dt><dd>' + fmtTime(rs.at) + '</dd>'
+          + (rs.pid ? '<dt>新进程</dt><dd>PID ' + esc(String(rs.pid)) + '</dd>' : '')
+          + (rs.command ? '<dt>命令</dt><dd>' + esc(rs.command) + '</dd>' : '')
+          + (rs.error ? '<dt style="color:#f53f3f">错误</dt><dd style="color:#f53f3f">' + esc(rs.error) + '</dd>' : '')
+          + '</dl>'
+        : '<div style="font-size:12.5px;color:#86909c">还没有从控制台发起过重启。</div>') +
+      '<div class="btnrow"><button id="btnRefreshStatus">刷新状态</button></div>' +
+    '</div>';
+
+  const mcpCard = (() => {
+    if (S.mcpErr) return '<div class="card"><h3>MCP 服务</h3><div class="notice err">加载失败：' + esc(S.mcpErr) + '</div></div>';
+    const list = (S.mcp && S.mcp.services) || [];
+    if (!list.length) return '<div class="card"><h3>MCP 服务</h3><div style="font-size:12.5px;color:#86909c">tools/ 下还没有 mcp-* 目录。</div></div>';
+    return '<div class="card"><h3>MCP 服务</h3>' +
+      list.map(svc => {
+        const busy = S.mcpBusy === svc.name;
+        const btns = svc.running
+          ? '<button id="mcp-restart-' + esc(svc.name) + '"' + (busy?' disabled':'') + '>重启</button>' +
+            '<button class="danger" id="mcp-stop-' + esc(svc.name) + '"' + (busy?' disabled':'') + '>停止</button>'
+          : (svc.startable
+              ? '<button class="primary" id="mcp-start-' + esc(svc.name) + '"' + (busy?' disabled':'') + '>启动</button>'
+              : '<span style="font-size:12px;color:#86909c">stdio 服务需由客户端以管道拉起</span>');
+        return '<div style="border-bottom:1px solid #f7f8fa;padding:8px 0">' +
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">' +
+            '<b style="font-size:13px">' + esc(svc.label) + '</b>' +
+            '<span class="pill ' + (svc.running?'up':'down') + '">' + (svc.running?'运行中':'未运行') + '</span>' +
+            '<span class="pill restart">' + esc(svc.transport) + '</span>' +
+            (svc.startable ? '' : '<span class="pill warn">客户端拉起</span>') +
+          '</div>' +
+          (svc.description ? '<div style="font-size:12px;color:#4e5969;margin-bottom:4px">' + esc(svc.description) + '</div>' : '') +
+          '<div style="font-size:11.5px;color:#86909c">入口 ' + esc(svc.entry) + (svc.pid ? ' · PID ' + svc.pid : '') + (svc.startedAt ? ' · 启动于 ' + fmtTime(svc.startedAt) : '') + '</div>' +
+          (svc.startable ? '<div style="font-size:11.5px;color:#86909c;margin-top:2px">HTTP 地址：<code style="background:#f7f8fa;padding:1px 5px;border-radius:3px">' + esc(svc.httpUrl) + '</code></div>' : '<div style="font-size:11.5px;color:#86909c;margin-top:2px">客户端启动命令：<code style="background:#f7f8fa;padding:1px 5px;border-radius:3px">' + esc(svc.clientCommand) + '</code></div>') +
+          '<div class="btnrow">' + btns + '</div>' +
+        '</div>';
+      }).join('') +
+      '<div style="font-size:11px;color:#86909c;margin-top:8px">MCP 服务可以由使用方（ZCode / DSH）以管道拉起，也可以由控制台以 HTTP 模式拉起——两种方式看到的进程是同一个，停掉任意一个都会影响另一边。stdio 专用（不支持 HTTP）的只能由客户端拉起。</div>' +
+      '</div>';
+  })();
+
+  return '<div class="console">'
+    + (S.starting ? '<div class="notice" style="background:#e8f3ff;color:#0e4fd4;border:1px solid #b8d4ff">' + (S.starting==='restart'?'服务端正在重启':'服务端正在启动') + '，请稍候（通常 10-30 秒），页面会自动恢复。</div>' : '')
+    + (S.serverStopped ? '<div class="notice warn">服务端已停止。恢复请运行 <code>' + esc(S.stopCmd || 'pwsh scripts/start_production.ps1') + '</code>；重新起来后本页会自动恢复显示。</div>' : '')
+    + (S.saved ? '<div class="notice ok">配置已保存：' + esc(S.saved) + '。标记为"需重启"的项目要重启服务端后才生效。</div>' : '')
+    + '<div class="cards">' + serverCard + bridgeCard + inflightCard + restartCard + mcpCard + '</div>'
+    + renderConfigForm(c.config)
+    + '</div>';
+}
+
+function renderConfigForm(config){
+  if (!config) return '<div class="notice err">配置未加载。</div>';
+  const byGroup = {};
+  for (const f of config.fields) { (byGroup[f.group] = byGroup[f.group] || []).push(f); }
+  const groups = config.groups || Object.keys(byGroup);
+  let html = '<div class="card"><h3>配置项 <span style="font-weight:400;color:#86909c;font-size:11px">' + esc(config.envFile) + '</span></h3>';
+  html += '<div class="notice warn">密钥类只显示"是否已配置"，不回显内容；修改后需重启的项会标注。保存前会自动备份原文件。</div>';
+  for (const g of groups) {
+    html += '<div class="cfggroup"><h4>' + esc(g) + '</h4>';
+    for (const f of (byGroup[g] || [])) {
+      const id = 'cfg_' + f.key;
+      let control;
+      if (f.readOnly) {
+        control = '<input value="' + (f.kind === 'secret' ? (f.present ? '已配置（' + f.secretLength + ' 字符）' : '未配置') : esc(f.value)) + '" disabled>';
+      } else if (f.kind === 'secret') {
+        control = '<input type="password" id="' + id + '" placeholder="' + (f.present ? '已配置（' + f.secretLength + ' 字符），留空表示保持不变' : '未配置，填写后保存') + '" autocomplete="new-password">';
+      } else if (f.kind === 'boolean') {
+        const cur = f.value === '' ? '' : (/^(1|true)$/i.test(f.value) ? 'true' : 'false');
+        control = '<select id="' + id + '"><option value="">（不设置）</option><option value="true"' + (cur==='true'?' selected':'') + '>true</option><option value="false"' + (cur==='false'?' selected':'') + '>false</option></select>';
+      } else if (f.kind === 'enum') {
+        control = '<select id="' + id + '"><option value="">（不设置）</option>' + (f.options||[]).map(o => '<option value="' + esc(o) + '"' + (f.value===o?' selected':'') + '>' + (o===''?'（空）':esc(o)) + '</option>').join('') + '</select>';
+      } else {
+        control = '<input id="' + id + '" value="' + esc(f.value) + '"' + (f.kind==='number'?' type="number"':'') + ' placeholder="（不设置）">';
+      }
+      html += '<div class="cfgrow"><label for="' + id + '">' + esc(f.label)
+        + (f.restartRequired ? ' <span class="pill restart">需重启</span>' : '')
+        + (f.hint ? '<span class="hint">' + esc(f.hint) + '</span>' : '')
+        + '</label><div>' + control + '</div></div>';
+    }
+    html += '</div>';
+  }
+  html += '<div class="btnrow"><button class="primary" id="btnSaveConfig"' + (S.saving?' disabled':'') + '>' + (S.saving?'保存中…':'保存配置') + '</button></div>';
+  html += '</div>';
+  return html;
+}
+
+function bindConsole(){
+  const on = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
+  on('btnBridgeStart', () => bridgeAction('start'));
+  on('btnBridgeStop', () => bridgeAction('stop'));
+  on('btnBridgeRestart', () => bridgeAction('restart'));
+  on('btnRefreshStatus', () => loadConsole());
+  on('btnServerStart', () => serverAction('start'));
+  on('btnServerStop', async () => {
+    const c = S.console && S.console.status;
+    const n = (c && c.inFlight || []).length;
+    const msg = n > 0
+      ? '当前有 ' + n + ' 个排查正在进行，停止会中断它们。确定停止服务端？'
+      : '确定停止 xkang 服务端？停止后监控台与群里 @ 都会不可用，需要手动运行恢复命令。';
+    if (!confirm(msg)) return;
+    if (n > 0 && !confirm('再次确认：这 ' + n + ' 个进行中的排查会被中断，结果记为失败。继续？')) return;
+    if (!confirm('最后一次确认：停止后本页面将无法访问，只能用命令恢复。继续？')) return;
+    try {
+      const r = await fetch('/admin/feishu/console/server/stop', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ force: n > 0 }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(j.error || ('HTTP ' + r.status)); return; }
+      S.serverStopped = true; S.stopCmd = j.command || 'pwsh scripts/start_production.ps1';
+      render();
+    } catch (e) { alert('请求失败：' + e.message); }
+  });
+  on('btnServerRestart', async () => {
+    const c = S.console && S.console.status;
+    const n = (c && c.inFlight || []).length;
+    const msg = n > 0
+      ? '当前有 ' + n + ' 个排查正在进行，重启会中断它们。确定仍要重启服务端？'
+      : '确定重启 xkang 服务端？重启期间群里 @ 不会得到响应，页面会自动重连。';
+    if (!confirm(msg)) return;
+    if (n > 0 && !confirm('再次确认：这 ' + n + ' 个进行中的排查会被中断，结果记为失败。继续？')) return;
+    serverAction('restart');
+  });
+  // MCP 服务按钮（动态 id，逐个绑）
+  document.querySelectorAll('[id^="mcp-start-"]').forEach(el => el.onclick = () => mcpAction(el.id.replace('mcp-start-',''), 'start'));
+  document.querySelectorAll('[id^="mcp-stop-"]').forEach(el => el.onclick = () => mcpAction(el.id.replace('mcp-stop-',''), 'stop'));
+  document.querySelectorAll('[id^="mcp-restart-"]').forEach(el => el.onclick = () => mcpAction(el.id.replace('mcp-restart-',''), 'restart'));
+  on('btnSaveConfig', saveConfig);
+}
+
+async function serverAction(action){
+  if (S.starting) return;
+  S.starting = action;
+  render();
+  // 先试服务端自己的接口；服务端已经停了就连不上，这时改走接棒小服务（8601）。
+  // 两个接口都可能是长耗时（等端口释放 + 服务端启动要十几秒），所以界面一律先进「进行中」态，
+  // 再由轮询确认到底起没起来——不能让人对着一个没反应的按钮猜。
+  let viaKeeper = false;
+  try {
+    const r = await fetch('/admin/feishu/console/server/' + action, { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({}) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { S.starting=''; alert(j.error || ('HTTP ' + r.status)); render(); return; }
+    if (action === 'start' && j.already) { S.starting=''; S.serverStopped=false; await loadConsole(); alert('服务端已经在运行。'); return; }
+    if (action === 'start' && !j.starting) { await waitServerUp(); return; }
+  } catch (e) {
+    if (action !== 'start') { S.starting=''; alert('请求失败：' + e.message); render(); return; }
+    viaKeeper = true;
+  }
+  if (viaKeeper) {
+    try {
+      const r = await fetch('http://127.0.0.1:8601/start', { method:'POST', headers:{'Content-Type':'application/json'} });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { S.starting=''; alert('接棒服务启动失败：' + (j.error || ('HTTP ' + r.status)) + '。请手动运行：' + (S.stopCmd || 'pwsh scripts/start_production.ps1')); render(); return; }
+    } catch (e2) {
+      S.starting='';
+      alert('服务端已停止，接棒服务（8601）也未响应。请手动运行：' + (S.stopCmd || 'pwsh scripts/start_production.ps1'));
+      render();
+      return;
+    }
+  }
+  await waitServerUp();
+}
+
+/** 轮询等服务端回来：最多 90 秒，每 2 秒一次；起来就刷新页面，起不来就给出现成命令 */
+async function waitServerUp(){
+  const deadline = Date.now() + 90000;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 2000));
+    let up = false;
+    try {
+      const r = await fetch('/admin/feishu/console/status', { credentials:'same-origin' });
+      if (r.ok) up = true;
+    } catch { /* 还没起来 */ }
+    if (up) { S.starting=''; S.serverStopped=false; location.reload(); return; }
+  }
+  S.starting='';
+  alert('等了 90 秒服务端仍未起来。请查看 server/data/diagnostics/ 下的 restart-from-console.log 与 keeper.log，或手动运行：' + (S.stopCmd || 'pwsh scripts/start_production.ps1'));
+  render();
+}
+async function mcpAction(name, action){
+  if (S.mcpBusy) return;
+  S.mcpBusy = name; render();
+  try {
+    const r = await fetch('/admin/feishu/console/mcp/' + encodeURIComponent(name) + '/' + action, { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({}) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { alert(j.error || ('HTTP ' + r.status)); S.mcpBusy=''; render(); return; }
+    if (action === 'stop' && j.wasRunning === false) { alert('该 MCP 服务本来就没在运行。'); }
+    await loadConsole();
+  } catch (e) { alert('请求失败：' + e.message); }
+  S.mcpBusy=''; render();
+}
+async function bridgeAction(action){
+  try {
+    const r = await fetch('/admin/feishu/console/bridge/' + action, { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({}) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { alert(j.error || ('HTTP ' + r.status)); return; }
+    await loadConsole();
+  } catch (e) { alert('请求失败：' + e.message); }
+}
+
+async function saveConfig(){
+  const c = S.console && S.console.config;
+  if (!c) return;
+  const changes = [];
+  for (const f of c.fields) {
+    if (f.readOnly) continue;
+    const el = document.getElementById('cfg_' + f.key);
+    if (!el) continue;
+    const v = el.value;
+    if (f.kind === 'secret') { if (v === '') continue; changes.push({ key: f.key, value: v }); continue; }
+    const original = f.present ? f.value : '';
+    if (v !== original) changes.push({ key: f.key, value: v });
+  }
+  if (!changes.length) { alert('没有改动'); return; }
+  S.saving = true; render();
+  try {
+    const r = await fetch('/admin/feishu/console/config', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ changes }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { alert(j.error || ('HTTP ' + r.status)); S.saving = false; render(); return; }
+    S.saved = (j.updated || []).concat(j.added || []).join('、');
+    await loadConsole();
+  } catch (e) { alert('保存失败：' + e.message); S.saving = false; render(); }
+}
+
+function renderDetail(){
+  const d = S.detail;
+  if (!d) return '<div class="empty">从左侧选择一个任务</div>';
+  const t = d.task;
+  let answer = null;
+  try { answer = t.answerJson ? JSON.parse(t.answerJson) : null; } catch {}
+  const ansText = answer?.text || '';
+
+  const pane = {
+    input: `<pre>${esc(t.inputText || '(未记录输入)')}</pre>`,
+    steps: d.steps.length ? d.steps.map(s => `
+      <div class="step ${esc(s.kind)}">
+        <div class="step-time">${fmtTime(s.at)}</div>
+        <div class="step-title">${esc(s.summary)}</div>
+        ${s.detail ? `<div class="step-detail">${esc(s.detail)}</div>` : ''}
+      </div>`).join('') : '<div class="empty">暂无过程记录</div>',
+    output: `<pre>${esc(ansText || t.error || '(尚无输出)')}</pre>`,
+  };
+
+  return `
+    <h2>任务 ${esc(t.id)}</h2>
+    <dl class="kv">
+      <dt>状态</dt><dd><span class="badge ${t.status}">${statusText[t.status]||t.status}</span>${t.reviewStatus ? ' · 复核 '+esc(t.reviewStatus) : ''}</dd>
+      <dt>群组</dt><dd>${esc(t.chatName||t.chatId)}</dd>
+      <dt>发起客服</dt><dd>${esc(t.requesterName||t.requesterOpenId)}</dd>
+      ${t.originAuthorOpenId && t.originAuthorOpenId !== t.requesterOpenId
+        ? `<dt>原问题作者</dt><dd>${esc(t.originAuthorOpenId)} <span style="color:#86909c">（与发起人不同，回复会同时 @ 两人）</span></dd>`
+        : ''}
+      <dt>排队 / 开始</dt><dd>${fmtTime(t.queuedAt)} → ${fmtTime(t.startedAt)}</dd>
+      <dt>耗时</dt><dd>${fmtDur(t.durationMs)}</dd>
+      <dt>上下文</dt><dd>保留 ${t.keptCount ?? '—'} / 窗口 ${t.windowCount ?? '—'} 条 · 附件 ${t.attachmentCount ?? 0} 个</dd>
+      <dt>原消息</dt><dd>${esc(t.originMessageId)}</dd>
+      ${t.error ? `<dt>错误</dt><dd style="color:#f53f3f">${esc(t.error)}</dd>` : ''}
+    </dl>
+    <div class="tabs">
+      <div class="tab ${S.tab==='input'?'active':''}" data-tab="input">清洗后输入</div>
+      <div class="tab ${S.tab==='steps'?'active':''}" data-tab="steps">分析过程</div>
+      <div class="tab ${S.tab==='output'?'active':''}" data-tab="output">详细输出</div>
+    </div>
+    <div class="toolbar"><button id="copyInput">复制输入</button></div>
+    <div class="pane active">${pane[S.tab]}</div>`;
+}
+
+load();
+setInterval(() => { load(); }, 10000);
+</script>
+</body>
+</html>

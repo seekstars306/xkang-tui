@@ -1,0 +1,40 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import { launchBrowser, findBrowser } from '../helpers/cdp_browser.mjs';
+import { startPreview } from '../helpers/preview_process.mjs';
+const preview = process.argv[2] ? null : await startPreview({ port: 8697, args: ['--demo'] });
+const base = process.argv[2] || preview.url;
+const out = process.argv[3] || path.join(os.tmpdir(), 'xkang-public-ui-shots');
+fs.mkdirSync(out, { recursive: true });
+assert.match(findBrowser(), /Google[\\/]Chrome|google-chrome/i, '验收必须使用 Google Chrome');
+const browser = await launchBrowser();
+try {
+  const page = await browser.newPage({ width: 1280, height: 900 });
+  await page.goto(base);
+  await page.eval('new Promise(r => setTimeout(r, 500))');
+  await page.screenshot(path.join(out, '01-welcome.png'));
+  await page.eval("els.input.value = '请核对演示客户的完整电话、证件及收款资料'; autosize(); els.sendBtn.click();");
+  for (let i = 0; i < 100; i++) { await page.eval('new Promise(r => setTimeout(r, 100))'); if (!(await page.eval('state.busy'))) break; }
+  assert.equal(await page.eval('state.busy'), false);
+  const live = await page.eval("({text:document.querySelector('.answer')?.innerText,review:document.querySelector('.answer')?.dataset.verdict,id:state.sessionId,rawSteps:document.querySelectorAll('.step-detail,.step-think').length})");
+  assert.equal(live.review, 'reviewed'); assert.equal(live.rawSteps, 0);
+  for (const value of ['0013812345678','11010119900101001X','1530517490084478976']) assert.ok(live.text.includes(value), value);
+  assert.doesNotMatch(live.text, /PRIVATE_|private_field|SELECT|CustomerService/);
+  const wire = await page.eval("(async () => JSON.stringify({session:await (await fetch('/api/session/' + state.sessionId)).json(),list:await (await fetch('/api/sessions')).json()}))()");
+  assert.doesNotMatch(wire, /PRIVATE_|raw_tool_result|reasoning_content|private_field|SELECT/);
+  await page.screenshot(path.join(out, '02-business-answer.png'));
+  await page.eval("Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__copiedAnswer=text;}}}); document.querySelector('.answer-foot .foot-btn').click();");
+  const copied = await page.eval('window.__copiedAnswer');
+  assert.ok(copied.includes('11010119900101001X')); assert.doesNotMatch(copied, /PRIVATE_|SELECT/);
+  await page.goto(base.replace(/\/$/, '') + '/?reload=1#' + live.id);
+  await page.eval('new Promise(r => setTimeout(r, 700))');
+  assert.equal(await page.eval("document.querySelector('.answer')?.dataset.verdict"), live.review);
+  assert.equal(await page.eval("document.querySelector('.answer')?.innerText"), live.text);
+  await page.screenshot(path.join(out, '03-replay.png'));
+  await page.setViewport(420, 900, true);
+  await page.screenshot(path.join(out, '04-mobile.png'));
+  assert.equal(page.errors.length, 0, page.errors.join(' | '));
+  console.log(JSON.stringify({ passed:true, browser:'Google Chrome', fullBusinessData:true, noInternalDetails:true, replayMatches:true, copyVerified:true, screenshots:out }));
+} finally { await browser.close(); await preview?.stop(); }

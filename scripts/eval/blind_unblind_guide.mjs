@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+const name = 'blind-guide-20261030';
+const scores = JSON.parse(fs.readFileSync('eval_run/' + name + '/scores.json', 'utf8'));
+const key = Object.fromEntries(JSON.parse(fs.readFileSync('eval_run/' + name + '-key/key.json', 'utf8')).map(k => [k.blindId, k]));
+const val = { hit: 1, partial: 0.5, miss: 0 }, cv = { correct: 1, partial: 0.5, wrong: 0, none: 0 }, av = { yes: 1, partly: 0.5, no: 0 };
+const rows = scores.map(s => { const k = key[s.blindId]; const its = Object.values(s.items || {}); return { ...s, ...k, rate: its.reduce((a, v) => a + (val[v] ?? 0), 0) / (its.length || 1), wrongA: (s.wrongClaims || []).filter(w => w.where === 'asserted').length }; });
+for (const r of rows.sort((a, b) => (a.ticket + a.arm).localeCompare(b.ticket + b.arm))) console.log(r.ticket.padEnd(8), r.arm === 'g0b' ? '旧写法' : '新写法', 'rate=' + r.rate.toFixed(2), 'use=' + r.usable, 'wrongA=' + r.wrongA, '| 结论:', r.correct, 'answer=' + r.answersQuestion, 'todo=' + r.saysWhatToDo, 'clarity=' + r.clarity, JSON.stringify(r.issues), '|', r.note);
+const agg = f => { for (const arm of ['g0b', 'g2b']) { const rs = rows.filter(r => r.arm === arm && f(r)); const m = g => rs.reduce((a, r) => a + g(r), 0) / rs.length; console.log((arm === 'g0b' ? '旧写法' : '新写法'), 'n=' + rs.length, '要点得分=' + m(r => r.rate).toFixed(2), '能直接用=' + m(r => r.usable).toFixed(1), '肯定说错=' + m(r => r.wrongA).toFixed(1), '| 结论成因=' + m(r => cv[r.correct] ?? 0).toFixed(2), '直接回答=' + m(r => av[r.answersQuestion] ?? 0).toFixed(2), '说怎么办=' + m(r => r.saysWhatToDo === 'yes' ? 1 : 0).toFixed(2), '易懂度=' + m(r => r.clarity).toFixed(1), '结论字数=' + Math.round(m(r => (r.conclusion || '').length))); } };
+console.log('\n== 六单合计（T001 两边都兜底）'); agg(() => true);
+console.log('\n== 去掉 T001'); agg(r => r.ticket !== 'T001');

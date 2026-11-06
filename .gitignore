@@ -1,0 +1,55 @@
+# dependencies & build output
+node_modules
+dist
+
+# secrets & local env (credentials live only here)
+.env
+.env.local
+.zcode/
+
+# runtime data: sessions, audit logs, tokens, codegraph index, release binaries
+data/
+server/data/
+*.db
+*.db-shm
+*.db-wal
+*.jsonl
+active_model.json
+key_shell.txt
+
+# binaries & packaging artifacts
+*.exe
+out/
+.v2c/
+
+# misc
+*.log
+.DS_Store
+
+# eval reports contain business data
+# 原始回放答案、私有轨迹、盲评分与来源映射只保留本地，禁止误入 Git。
+/eval_run/
+# 只忽略数据产物；运行器与映射是工程资产，需要入库（否则改了什么无从追溯）。
+# 注意：git 不会进入被忽略的目录，所以要逐层解禁再精确放行，不能直接写 !子路径。
+tests/eval/reports/*
+!tests/eval/reports/_retest/
+tests/eval/reports/_retest/*
+# 一次性排查脚本以 _ 开头，不入库
+tests/eval/reports/_retest/_*
+# 只放行长期维护的运行器
+!tests/eval/reports/_retest/full_ticket_run.ts
+!tests/eval/reports/_retest/ab_batch.mjs
+!tests/eval/reports/_retest/turns120_batch.mjs
+!tests/eval/reports/_retest/control_arm/
+tests/eval/reports/_retest/control_arm/*
+!tests/eval/reports/_retest/control_arm/*.mjs
+
+
+# web UI screenshots (tests/ui/web_ui_snapshots.mjs)
+tests/ui/shots/
+
+# --- 例外区：以下工程资产必须入库，放在最后以确保优先级 ---
+# 服务映射：部署名/配置目录/仓库/包名，不含订单号等业务数据
+!server/data/
+server/data/*
+!server/data/service_map.json
